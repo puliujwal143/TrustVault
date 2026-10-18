@@ -1,0 +1,62 @@
+# ==============================================================================
+# TrustVault - .gitignore
+# ==============================================================================
+
+# Compiled class files and Maven build output
+target/
+*.class
+*.jar
+*.war
+*.ear
+*.nar
+
+# Local environment files and secrets
+.env
+.env.local
+.env.*.local
+*.key
+*.pem
+*.p12
+*.jks
+*.keystore
+.env.*
+!.env.example
+
+# Private uploaded documents & storage directories
+# CRITICAL: Document files must NEVER be tracked or committed to Git
+private-storage/
+uploads/
+storage/
+data/
+*.pdf
+*.docx
+*.xlsx
+*.enc
+
+# IDE & Editor files
+.idea/
+*.iml
+*.iws
+*.ipr
+.vscode/
+*.code-workspace
+.project
+.classpath
+.settings/
+.springBeans
+.sts4-cache/
+
+# OS-generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+[Dd]esktop.ini
+
+# Logs
+logs/
+*.log
+

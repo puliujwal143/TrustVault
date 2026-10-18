@@ -1,0 +1,65 @@
+# ==============================================================================
+# TrustVault - Application Configuration
+# ==============================================================================
+# All sensitive parameters (database credentials, secrets, storage paths)
+# MUST be injected via environment variables. Do NOT hardcode credentials.
+# ==============================================================================
+
+spring:
+  application:
+    name: trustvault
+
+  # ----------------------------------------------------------------------------
+  # PostgreSQL Datasource Configuration
+  # ----------------------------------------------------------------------------
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:trustvault}}
+    username: ${SPRING_DATASOURCE_USERNAME:${DB_USERNAME:postgres}}
+    password: ${SPRING_DATASOURCE_PASSWORD:${DB_PASSWORD:}}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: ${DB_POOL_MAX:10}
+      minimum-idle: ${DB_POOL_MIN_IDLE:2}
+      connection-timeout: 30000
+      idle-timeout: 600000
+      max-lifetime: 1800000
+
+  # ----------------------------------------------------------------------------
+  # Spring Data JPA / Hibernate Configuration
+  # ----------------------------------------------------------------------------
+  jpa:
+    hibernate:
+      ddl-auto: ${JPA_DDL_AUTO:validate}
+    properties:
+      hibernate:
+        format_sql: ${JPA_FORMAT_SQL:false}
+    show-sql: ${SHOW_SQL:false}
+    open-in-view: false
+
+  # ----------------------------------------------------------------------------
+  # Thymeleaf Template Engine Configuration
+  # ----------------------------------------------------------------------------
+  thymeleaf:
+    cache: ${THYMELEAF_CACHE:true}
+    mode: HTML
+    encoding: UTF-8
+    check-template-location: true
+
+# ------------------------------------------------------------------------------
+# Server Configuration
+# ------------------------------------------------------------------------------
+server:
+  port: ${PORT:8080}
+  error:
+    include-message: never
+    include-binding-errors: never
+    include-stacktrace: never
+    include-exception: false
+
+# ------------------------------------------------------------------------------
+# TrustVault Storage Configuration (Private & Non-Static)
+# ------------------------------------------------------------------------------
+trustvault:
+  storage:
+    # Uploaded documents must NEVER be located in public static asset directories
+    upload-dir: ${STORAGE_UPLOAD_DIR:./private-storage/uploads}

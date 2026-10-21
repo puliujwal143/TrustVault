@@ -24,10 +24,12 @@ target/
 
 # Private uploaded documents & storage directories
 # CRITICAL: Document files must NEVER be tracked or committed to Git
-private-storage/
-uploads/
-storage/
-data/
+/private-storage/
+/uploads/
+/storage/
+/data/
+*.bin
+*.tmp
 *.pdf
 *.docx
 *.xlsx

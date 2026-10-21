@@ -800,3 +800,189 @@ Implementation of TrustVault Milestone 2.3 — Stage 3: Business-Service Audit I
 - **Audit History API Not Yet Implemented**: Audit records are stored append-only in the database and accessible via `AuditService` query methods, but no REST API or administrative UI is exposed in this milestone (by design).
 - **No Files Committed or Pushed**: All changes remain local in the working tree.
 
+---
+
+## Date: 2026-10-21 (Session 12 — Milestone 2.4 Stage 1: Storage Engine Abstraction & Local Disk Implementation)
+
+### Context & Task
+Implementation of TrustVault Milestone 2.4 — Stage 1: Storage Engine Abstraction and Local Disk Implementation ONLY. Implemented `StorageService` interface, `LocalStorageService`, `StorageException`, `StorageFileNotFoundException`, path traversal defenses, atomic temporary-file staging promotion, and 14 dedicated storage tests while keeping the storage layer completely decoupled from `DocumentService`, database entities, and HTTP controllers.
+
+### User Prompt
+> Implement TrustVault Milestone 2.4 — Stage 1: Storage Engine Abstraction and Local Disk Implementation ONLY.
+>
+> Project context:
+> - Java 21, Spring Boot, Spring Security, Spring Data JPA, PostgreSQL.
+> - Existing document authorization, sharing, and append-only audit system.
+> - Latest local Git checkpoint is clean.
+> - Existing full test suite passed 89 tests.
+> - GitHub repository must remain private. Do not push.
+> - Free tools and dependencies only.
+>
+> Design decisions:
+> - The document owner and collaborators with EDIT permission will be allowed to upload/replace files in a later stage.
+> - READ collaborators will only be allowed to download.
+> - Allowed file formats will be PDF, DOCX, XLSX, PPTX, TXT, CSV, PNG, and JPEG.
+> - Maximum file size will default to 10 MB.
+> - These upload policies are for later stages; do not implement upload endpoints now.
+>
+> Stage 1 scope:
+> 1. Inspect the existing project configuration, .gitignore, tests, and architecture documentation.
+> 2. Create a StorageService interface with methods suitable for storing, loading, checking existence, and deleting files using UUID storage keys.
+> 3. Create LocalStorageService that stores files in a configurable private directory, defaulting to ./private-storage/uploads.
+> 4. Ensure storage is outside public/static resource directories. Never use a client-supplied filename to construct a disk path.
+> 5. Normalize and validate resolved paths to prevent path traversal. Use UUID-based storage names.
+> 6. Implement safe file creation, loading, and deletion with clear error handling. Use atomic file moves where applicable and supported.
+> 7. Create suitable storage exceptions.
+> 8. Add focused tests for store, load, delete, missing files, invalid keys/paths, and relevant filesystem failures.
+> 9. Keep the storage implementation independent of DocumentService for now.
+> 10. Do not modify the Document entity or schema in this stage.
+> 11. Do not add controllers, upload/download endpoints, file validation, audit actions, or service integration yet.
+> 12. Do not stage, commit, or push anything.
+> 13. Update PROMPTS.md with the actual work and exact test results. Report every changed file and unresolved issues.
+>
+> Run .\mvnw.cmd test and report the exact number of tests, failures, errors, skipped tests, and build status.
+>
+> Important: Do not claim that local filesystem storage is durable on free hosting platforms with ephemeral disks. Document that limitation for later deployment planning.
+
+### Issues Identified & Technical Solutions
+
+1. **Gitignore Pattern Masking Java Package**:
+   - *Issue*: A bare `storage/` directory pattern in `.gitignore` matched any folder named `storage` in the tree, which unintentionally ignored Java source code packages `src/main/java/com/trustvault/storage` and `src/test/java/com/trustvault/storage`.
+   - *Solution*: Anchored filesystem storage directory exclusions to the repository root with leading slashes (`/private-storage/`, `/uploads/`, `/storage/`, `/data/`), ensuring on-disk storage directories remain untracked while Java source files are correctly tracked.
+
+2. **Path Traversal Defense & Identifier Obfuscation**:
+   - *Requirement*: Files must be referenced by UUID, never by client-supplied filenames, and resolved paths must never escape the storage root.
+   - *Solution*: `LocalStorageService.resolvePath(UUID storageKey)` validates that the storage key conforms to standard UUID formatting and resolves destination paths as `{storageKey}.bin`. It normalizes the path and enforces `resolved.getParent().equals(rootLocation)` and `resolved.startsWith(rootLocation)`, rejecting any traversal attempt with `StorageException`.
+
+3. **Atomic File Creation & Partial Write Protection**:
+   - *Requirement*: Protect against corrupt or partially-written files on filesystem or network stream interruptions.
+   - *Solution*: Content is streamed into a unique temporary staging file (`tv_upload_{storageKey}_{uuid}.tmp`) first. Once streaming completes successfully, `Files.move(..., ATOMIC_MOVE, REPLACE_EXISTING)` atomically promotes the temporary file to `{storageKey}.bin` (falling back to standard replacement if atomic move is unsupported on the underlying filesystem). A `finally` block guarantees that temporary files are deleted if an error occurs during write.
+
+4. **Proactive Web Static Asset Directory Defense**:
+   - *Requirement*: Storage directories must never reside inside public or static web folders.
+   - *Solution*: `LocalStorageService.init()` inspects the normalized root path and throws `StorageException` if it contains `/static`, `/public`, `/resources/static`, or equivalent web-accessible target folders.
+
+### Files Created & Modified
+- `.gitignore` (Modified: Anchored private storage directory patterns to root)
+- `src/main/java/com/trustvault/storage/StorageService.java` (Created: Core storage abstraction interface)
+- `src/main/java/com/trustvault/storage/LocalStorageService.java` (Created: Local disk implementation with atomic staging and path traversal checks)
+- `src/main/java/com/trustvault/storage/StorageException.java` (Created: Base storage runtime exception)
+- `src/main/java/com/trustvault/storage/StorageFileNotFoundException.java` (Created: Specialized exception for missing files)
+- `src/main/java/com/trustvault/storage/package-info.java` (Created: Storage package documentation)
+- `src/test/java/com/trustvault/storage/LocalStorageServiceTest.java` (Created: 14 unit and integration tests)
+- `PROMPTS.md` (Updated: Session 12 implementation log)
+
+### Build & Verification Results
+- Command: `.\mvnw.cmd test`
+- Tests Executed: 103 total across 9 test classes:
+  - `HealthControllerTest`: 2 tests passed.
+  - `DocumentPersistenceTest`: 9 tests passed.
+  - `DocumentAuthorizationTest`: 25 tests passed.
+  - `AuditEventPersistenceTest`: 9 tests passed.
+  - `AuditServiceTest`: 8 tests passed.
+  - `BusinessAuditIntegrationTest`: 14 tests passed.
+  - `AuthenticationIntegrationTest`: 21 tests passed.
+  - `LocalStorageServiceTest`: 14 tests passed.
+  - `TrustVaultApplicationTests`: 1 test passed.
+- Failures: 0, Errors: 0, Skipped: 0.
+- Build Status: `BUILD SUCCESS` (34.245 s).
+
+### Unresolved Issues & Technical Limitations
+- **Ephemeral Filesystem Limitation on Free Cloud Hosting**: `LocalStorageService` writes files to the local host or container filesystem. On free cloud platforms (e.g. Render, Railway, Fly.io free tiers), containers have ephemeral disk storage that is wiped on restarts, sleep cycles, and redeployments. For persistent cloud deployments, a persistent volume mount or an S3-compatible cloud object storage provider (e.g. Cloudflare R2 or Backblaze B2, both offering 10 GB free storage) will be required. The `StorageService` interface was specifically designed to enable this pluggability in future milestones.
+- **Service Integration & Metadata Pending (Stage 2 & 3)**: `StorageService` is currently standalone and not yet wired into `Document`, `DocumentService`, `DocumentAuthorizationService`, or HTTP endpoints (deferred to subsequent stages by design).
+- **No Files Committed or Pushed**: All changes remain local in the working tree.
+
+---
+
+## Date: 2026-10-21 (Session 13 — Milestone 2.4 Stage 1 Security Hardening Pass)
+
+### Context & Task
+Security hardening of TrustVault Milestone 2.4 Stage 1 following the completed read-only security review. Implemented symbolic link defenses across all storage read, check, delete, and store operations; startup cleanup restricted strictly to application-owned `tv_upload_*.tmp` staging files; filesystem root path rejection (`/`, `C:\`); and narrowly scoped Git exclusion rules without impacting Java source packages.
+
+### User Prompt
+> Harden TrustVault Milestone 2.4 Stage 1 based on the completed read-only security review.
+>
+> Inspect the existing LocalStorageService.java, StorageService.java, LocalStorageServiceTest.java, and .gitignore before editing.
+>
+> Implement these fixes only:
+>
+> 1. Symbolic links:
+>    - Reject symbolic links for existing storage files before reading or reporting their presence.
+>    - Ensure loadAsStream(), loadAsResource(), exists(), getFileSize(), and delete() cannot follow a planted symlink outside the storage root.
+>    - Account for filesystem race conditions as far as practical with Java NIO. Do not claim perfect protection against every local filesystem race.
+>    - Add tests that create a symlink inside a temporary storage directory pointing to an external test file. Where symlinks are unsupported or prohibited by the OS, skip that test explicitly rather than pretending it passed.
+>
+> 2. Startup cleanup:
+>    - During init(), clean up only abandoned staging files matching the exact application-owned naming pattern tv_upload_*.tmp.
+>    - Do not delete final .bin files or unrelated .tmp files.
+>    - Add tests for cleanup behavior.
+>
+> 3. Storage root safety:
+>    - Reject filesystem roots such as / and C:\ during initialization.
+>    - Preserve valid temporary test directories and the default ./private-storage/uploads path.
+>    - Add tests for rejected root configurations.
+>
+> 4. Git exclusions:
+>    - Add narrowly scoped rules for generated .bin and .tmp files without excluding Java source files or unrelated repository content.
+>    - Check the effective ignore behavior for src/main/java/com/trustvault/storage/ and src/test/java/com/trustvault/storage/.
+>
+> 5. Keep the current StorageService API and do not integrate DocumentService, database metadata, file validation, controllers, or upload endpoints yet.
+>
+> 6. Update PROMPTS.md with the actual changes, issues, and exact test results.
+>
+> Run .\mvnw.cmd test and report the exact totals, failures, errors, skipped tests, and build status.
+>
+> Do not stage, commit, or push anything. List every changed file and any remaining limitations. Do not claim that a security test ran successfully if the environment skipped it.
+
+### Issues Identified & Technical Solutions
+
+1. **Symbolic Link Traversal & Planted Symlink Defense**:
+   - *Issue*: A pre-existing or maliciously planted symbolic link inside the storage directory could point to sensitive external files (e.g. `/etc/passwd` or application configuration). Methods like `loadAsStream()`, `loadAsResource()`, `getFileSize()`, `exists()`, and `delete()` could follow the link outside the storage root or report misleading existence/size.
+   - *Solution*:
+     - In `LocalStorageService.java`, added `assertNotSymbolicLink(Path filePath, UUID storageKey)` which checks `Files.isSymbolicLink(filePath)` and throws `StorageException("Security violation: Symbolic links are strictly prohibited: " + storageKey)`.
+     - Applied `LinkOption.NOFOLLOW_LINKS` to `Files.exists()`, `Files.isRegularFile()`, and `Files.newInputStream(filePath, StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS)` to mitigate race conditions at the NIO/OS level.
+     - Updated `exists()` to return `false` if `isSymbolicLink(filePath)` is detected.
+     - Updated `delete()` to reject symlinks via `assertNotSymbolicLink` before executing `Files.deleteIfExists()`.
+     - Updated `store()` to verify that the target path is not a symlink both before streaming and prior to atomic rename promotion.
+     - In `LocalStorageServiceTest.java`, created 6 dedicated symlink test methods (`exists`, `loadAsResource`, `loadAsStream`, `getFileSize`, `delete`, `store`). If symlink creation fails due to host OS restrictions (`SeCreateSymbolicLinkPrivilege` not held on Windows), the tests use `org.junit.jupiter.api.Assumptions.assumeTrue(...)` to explicitly skip the test rather than falsely claiming a pass.
+
+2. **Startup Cleanup Scope Restriction**:
+   - *Issue*: An overly broad cleanup on startup could accidentally delete valid storage files (`.bin`) or unrelated temporary files generated by other tooling.
+   - *Solution*: Implemented `cleanupAbandonedStagingFiles()` in `init()`, using a `DirectoryStream<Path>` filter matching only `tv_upload_*.tmp`. Verified via integration test `init_shouldCleanUpOnlyApplicationStagingFiles()` that abandoned staging files are deleted while final `.bin` files, unrelated `.tmp` files (`unrelated_backup.tmp`), and other files are strictly preserved.
+
+3. **Storage Root Traversal & Root Directory Safety**:
+   - *Issue*: Configuring root paths such as `/` (Linux root) or `C:\` (Windows drive root) as the storage root could lead to accidental modification, traversal, or deletion of operating system and application files during `deleteAll()`.
+   - *Solution*: Implemented `assertStoragePathNotRoot()` during `init()`. Checks `normalized.getParent() == null || normalized.equals(normalized.getRoot())` and throws `StorageException` if a root directory is configured, while allowing valid relative paths (e.g. `./private-storage/uploads`) and temporary test directories. Added test `init_shouldRejectFilesystemRootPaths()` verifying rejection of `/` and all roots returned by `FileSystems.getDefault().getRootDirectories()`.
+
+4. **Narrowly Scoped Git Exclusions**:
+   - *Issue*: Ensuring generated storage artifacts (`.bin` and `.tmp`) are ignored by Git without accidentally ignoring Java source code in `src/main/java/com/trustvault/storage/` or `src/test/java/com/trustvault/storage/`.
+   - *Solution*: Added `*.bin` and `*.tmp` under the `# Private uploaded documents & storage directories` section in `.gitignore`. Verified using `git check-ignore -v` that Java sources are tracked normally while disk binaries and staging temp files are ignored.
+
+### Files Created & Modified
+- `src/main/java/com/trustvault/storage/LocalStorageService.java` (Modified: Added symlink rejection, `LinkOption.NOFOLLOW_LINKS`, `assertStoragePathNotRoot`, and restricted startup cleanup)
+- `src/test/java/com/trustvault/storage/LocalStorageServiceTest.java` (Modified: Added root path rejection, startup cleanup scope, and 6 symlink tests with explicit skip assumptions)
+- `.gitignore` (Modified: Added `*.bin` and `*.tmp` rules)
+- `PROMPTS.md` (Updated: Session 13 implementation log)
+
+### Build & Verification Results
+- Command: `.\mvnw.cmd test`
+- Tests Executed: 112 total across 9 test classes:
+  - `HealthControllerTest`: 2 tests passed.
+  - `DocumentPersistenceTest`: 9 tests passed.
+  - `DocumentAuthorizationTest`: 25 tests passed.
+  - `AuditEventPersistenceTest`: 9 tests passed.
+  - `AuditServiceTest`: 8 tests passed.
+  - `BusinessAuditIntegrationTest`: 14 tests passed.
+  - `AuthenticationIntegrationTest`: 21 tests passed.
+  - `LocalStorageServiceTest`: 23 tests (17 passed, 6 skipped).
+  - `TrustVaultApplicationTests`: 1 test passed.
+- Failures: 0, Errors: 0, Skipped: 6.
+- Build Status: `BUILD SUCCESS` (33.779 s).
+- **Explicit Note on Skipped Tests**: Exactly 6 tests in `LocalStorageServiceTest` were skipped (`symlink_exists_shouldReturnFalseForPlantedSymlink`, `symlink_loadAsResource_shouldRejectPlantedSymlink`, `symlink_loadAsStream_shouldRejectPlantedSymlink`, `symlink_getFileSize_shouldRejectPlantedSymlink`, `symlink_delete_shouldRejectPlantedSymlink`, `symlink_store_shouldRejectPlantedSymlink`). On this Windows test host, Developer Mode is not active and unprivileged user accounts lack `SeCreateSymbolicLinkPrivilege`. Per design, `Assumptions.assumeTrue(...)` marked them as skipped rather than failing or falsely claiming pass.
+
+### Unresolved Issues & Technical Limitations
+- **Local Filesystem TOCTOU Concurrency Limitations**: Java NIO methods mitigate symlink attacks using `LinkOption.NOFOLLOW_LINKS` and pre-read assertions. However, true atomic non-following path resolution (e.g. `openat2` with `RESOLVE_NO_SYMLINKS` on modern Linux) is not fully exposed by Java NIO on all operating systems. Absolute protection against an attacker with concurrent local filesystem write access inside the storage directory cannot be guaranteed at the JVM layer alone without OS-level container isolation or dedicated mount permissions.
+- **Symlink Test Execution Environment**: In CI/CD pipelines running on Linux containers or Windows environments with Developer Mode enabled, the 6 skipped symlink tests will execute fully and validate symlink rejection against live filesystem symlinks.
+- **Storage Service Remains Standalone**: StorageService is not yet wired to `DocumentService`, DB entities, or HTTP controllers (by design; planned for subsequent stages).
+- **Ephemeral Filesystem Limitation**: Local storage files on free cloud hosting instances reset upon container redeployments.
+- **No Files Committed or Pushed**: All changes remain local in the working tree.

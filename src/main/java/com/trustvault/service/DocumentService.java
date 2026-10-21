@@ -311,6 +311,11 @@ public class DocumentService {
             String requestingUsername,
             String clientIp) {
 
+        if (!TransactionSynchronizationManager.isActualTransactionActive()
+                || !TransactionSynchronizationManager.isSynchronizationActive()) {
+            throw new IllegalStateException("Secure file upload requires an active transaction synchronization context");
+        }
+
         Objects.requireNonNull(documentId, "Document ID must not be null");
         Objects.requireNonNull(requestingUsername, "Requesting username must not be null");
         Objects.requireNonNull(inputStream, "Input stream must not be null");
@@ -328,107 +333,77 @@ public class DocumentService {
         UUID newFileStorageKey = UUID.randomUUID();
 
         // 3. Register rollback cleanup hook BEFORE storing so any subsequent failure purges the new blob
-        boolean txSyncActive = TransactionSynchronizationManager.isSynchronizationActive()
-                && TransactionSynchronizationManager.isActualTransactionActive();
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCompletion(int status) {
+                if (status == STATUS_ROLLED_BACK) {
+                    try {
+                        storageService.delete(newFileStorageKey);
+                        log.info("Purged uncommitted file blob {} following transaction rollback", newFileStorageKey);
+                    } catch (Exception e) {
+                        log.warn("Failed to purge uncommitted file blob {} on rollback: {}", newFileStorageKey, e.getMessage(), e);
+                    }
+                }
+            }
+        });
 
-        if (txSyncActive) {
+        // 4. Store validated bytes under new key (never overwrites the current blob)
+        storageService.store(newFileStorageKey, validated.openStream());
+
+        // 5. Acquire document lock and authorize using existing rules with SharePermission.EDIT
+        Document document = authorizationService.getAuthorizedDocumentForUpdate(
+                documentId, requestingUsername, SharePermission.EDIT
+        );
+
+        // 6. Capture the previous fileStorageKey
+        UUID oldFileStorageKey = document.getFileStorageKey();
+
+        // 7. Update file metadata and the new fileStorageKey atomically
+        document.setFileMetadata(
+                newFileStorageKey,
+                validated.originalFilename(),
+                validated.contentType(),
+                validated.size(),
+                validated.checksum(),
+                Instant.now()
+        );
+
+        Document savedDocument = documentRepository.save(document);
+
+        // 8. Record FILE_UPLOAD success in the same database transaction as the metadata change
+        if (auditService != null) {
+            auditService.recordSuccess(
+                    AuditAction.FILE_UPLOAD,
+                    requestingUsername.trim(),
+                    savedDocument.getId(),
+                    savedDocument.getStorageKey(),
+                    null,
+                    clientIp,
+                    String.format(Locale.ROOT, "filename=%s,size=%d,mime=%s",
+                            validated.originalFilename(), validated.size(), validated.contentType())
+            );
+        }
+
+        // 9. After transaction commit, delete the previous blob if one exists
+        if (oldFileStorageKey != null) {
             TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
                 @Override
-                public void afterCompletion(int status) {
-                    if (status == STATUS_ROLLED_BACK) {
-                        try {
-                            storageService.delete(newFileStorageKey);
-                            log.info("Purged uncommitted file blob {} following transaction rollback", newFileStorageKey);
-                        } catch (Exception e) {
-                            log.warn("Failed to purge uncommitted file blob {} on rollback: {}", newFileStorageKey, e.getMessage(), e);
-                        }
+                public void afterCommit() {
+                    try {
+                        storageService.delete(oldFileStorageKey);
+                        log.info("Successfully deleted superseded file blob {} after commit", oldFileStorageKey);
+                    } catch (Exception e) {
+                        // Non-fatal to committed transaction: log error for operator/cleanup job
+                        log.error("Failed to delete superseded file blob {} after commit: {}", oldFileStorageKey, e.getMessage(), e);
                     }
                 }
             });
         }
 
-        boolean storeSucceeded = false;
-        try {
-            // 4. Store validated bytes under new key (never overwrites the current blob)
-            storageService.store(newFileStorageKey, validated.openStream());
-            storeSucceeded = true;
+        log.info("File '{}' (size: {} bytes, blob: {}) successfully uploaded to document {} by '{}'",
+                validated.originalFilename(), validated.size(), newFileStorageKey, savedDocument.getId(), requestingUsername);
 
-            // 5. Acquire document lock and authorize using existing rules with SharePermission.EDIT
-            Document document = authorizationService.getAuthorizedDocumentForUpdate(
-                    documentId, requestingUsername, SharePermission.EDIT
-            );
-
-            // 6. Capture the previous fileStorageKey
-            UUID oldFileStorageKey = document.getFileStorageKey();
-
-            // 7. Update file metadata and the new fileStorageKey atomically
-            document.setFileMetadata(
-                    newFileStorageKey,
-                    validated.originalFilename(),
-                    validated.contentType(),
-                    validated.size(),
-                    validated.checksum(),
-                    Instant.now()
-            );
-
-            Document savedDocument = documentRepository.save(document);
-
-            // 8. Record FILE_UPLOAD success in the same database transaction as the metadata change
-            if (auditService != null) {
-                auditService.recordSuccess(
-                        AuditAction.FILE_UPLOAD,
-                        requestingUsername.trim(),
-                        savedDocument.getId(),
-                        savedDocument.getStorageKey(),
-                        null,
-                        clientIp,
-                        String.format(Locale.ROOT, "filename=%s,size=%d,mime=%s",
-                                validated.originalFilename(), validated.size(), validated.contentType())
-                );
-            }
-
-            // 9. After transaction commit, delete the previous blob if one exists
-            if (oldFileStorageKey != null) {
-                if (txSyncActive) {
-                    TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
-                        @Override
-                        public void afterCommit() {
-                            try {
-                                storageService.delete(oldFileStorageKey);
-                                log.info("Successfully deleted superseded file blob {} after commit", oldFileStorageKey);
-                            } catch (Exception e) {
-                                // Non-fatal to committed transaction: log error for operator/cleanup job
-                                log.error("Failed to delete superseded file blob {} after commit: {}", oldFileStorageKey, e.getMessage(), e);
-                            }
-                        }
-                    });
-                } else {
-                    // Direct cleanup if running outside active transaction synchronization
-                    try {
-                        storageService.delete(oldFileStorageKey);
-                    } catch (Exception e) {
-                        log.error("Failed to delete superseded file blob {}: {}", oldFileStorageKey, e.getMessage(), e);
-                    }
-                }
-            }
-
-            log.info("File '{}' (size: {} bytes, blob: {}) successfully uploaded to document {} by '{}'",
-                    validated.originalFilename(), validated.size(), newFileStorageKey, savedDocument.getId(), requestingUsername);
-
-            return savedDocument;
-
-        } catch (RuntimeException | Error ex) {
-            // Fallback immediate cleanup if running without active transaction synchronization
-            if (storeSucceeded && !txSyncActive) {
-                try {
-                    storageService.delete(newFileStorageKey);
-                    log.info("Purged uncommitted file blob {} on failure outside active transaction synchronization", newFileStorageKey);
-                } catch (Exception cleanupEx) {
-                    log.warn("Failed to clean up blob {} on exception: {}", newFileStorageKey, cleanupEx.getMessage(), cleanupEx);
-                }
-            }
-            throw ex;
-        }
+        return savedDocument;
     }
 
     /**
@@ -439,6 +414,11 @@ public class DocumentService {
             MultipartFile file,
             String requestingUsername,
             String clientIp) {
+
+        if (!TransactionSynchronizationManager.isActualTransactionActive()
+                || !TransactionSynchronizationManager.isSynchronizationActive()) {
+            throw new IllegalStateException("Secure file upload requires an active transaction synchronization context");
+        }
 
         if (file == null) {
             throw new FileValidationException("Upload file payload must not be null");

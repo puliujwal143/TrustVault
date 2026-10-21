@@ -265,6 +265,54 @@ class DocumentFileUploadServiceTest {
             // Old blob was deleted post-commit
             assertThat(storageService.exists(oldBlobKey)).isFalse();
         }
+
+        @Test
+        @DisplayName("uploadFile: old-blob deletion occurs only after transaction commit, preserving old blob during transaction")
+        void testOldBlobDeletionOccursOnlyAfterCommit() {
+            Document doc = documentService.createDocument("Replace Commit Order Doc", "Initial", "alice");
+            Document initialUpload = documentService.uploadFile(
+                    doc.getId(),
+                    new ByteArrayInputStream(VALID_PDF),
+                    "v1.pdf",
+                    "application/pdf",
+                    (long) VALID_PDF.length,
+                    "alice",
+                    "127.0.0.1"
+            );
+
+            UUID oldBlobKey = initialUpload.getFileStorageKey();
+            assertThat(storageService.exists(oldBlobKey)).isTrue();
+
+            TransactionTemplate txTemplate = new TransactionTemplate(transactionManager);
+            final UUID[] newBlobKeyHolder = new UUID[1];
+
+            txTemplate.execute(status -> {
+                Document replacement = documentService.uploadFile(
+                        doc.getId(),
+                        new ByteArrayInputStream(VALID_PNG),
+                        "v2.png",
+                        "image/png",
+                        (long) VALID_PNG.length,
+                        "alice",
+                        "127.0.0.1"
+                );
+
+                newBlobKeyHolder[0] = replacement.getFileStorageKey();
+                assertThat(newBlobKeyHolder[0]).isNotEqualTo(oldBlobKey);
+
+                // Before commit, BOTH old blob and new blob MUST exist simultaneously
+                assertThat(storageService.exists(oldBlobKey)).isTrue();
+                assertThat(storageService.exists(newBlobKeyHolder[0])).isTrue();
+
+                return null;
+            });
+
+            // After transaction commit finishes:
+            // 1. Old blob is now deleted post-commit
+            assertThat(storageService.exists(oldBlobKey)).isFalse();
+            // 2. New blob is preserved in storage
+            assertThat(storageService.exists(newBlobKeyHolder[0])).isTrue();
+        }
     }
 
     @Nested
@@ -558,6 +606,84 @@ class DocumentFileUploadServiceTest {
             Document committedDoc = documentRepository.findById(doc.getId()).orElseThrow();
             assertThat(committedDoc.getFileStorageKey()).isEqualTo(replaced.getFileStorageKey());
             assertThat(committedDoc.getFileOriginalName()).isEqualTo("v2.png");
+        }
+    }
+
+    @Nested
+    @DisplayName("5. Transaction Context Invariant Enforcement")
+    class TransactionInvariantTests {
+
+        @Test
+        @DisplayName("uploadFile: stream upload fails immediately if invoked without active transaction synchronization")
+        void testUploadStreamWithoutActiveTransactionFailsImmediately() throws Exception {
+            DocumentService unproxiedService = new DocumentService(
+                    documentRepository,
+                    userRepository,
+                    documentAuthorizationService,
+                    auditService,
+                    storageService,
+                    fileValidationService
+            );
+
+            Document doc = documentService.createDocument("No Tx Stream Doc", "Desc", "alice");
+
+            assertThatThrownBy(() -> unproxiedService.uploadFile(
+                    doc.getId(),
+                    new ByteArrayInputStream(VALID_PDF),
+                    "document.pdf",
+                    "application/pdf",
+                    (long) VALID_PDF.length,
+                    "alice",
+                    "127.0.0.1"
+            )).isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("Secure file upload requires an active transaction synchronization context");
+
+            // Verify document metadata is untouched (hasFile remains false)
+            Document reloaded = documentRepository.findById(doc.getId()).orElseThrow();
+            assertThat(reloaded.hasFile()).isFalse();
+
+            // Verify no file was created in storage
+            try (var stream = Files.list(storageService.resolvePath(UUID.randomUUID()).getParent())) {
+                assertThat(stream.toList()).isEmpty();
+            }
+        }
+
+        @Test
+        @DisplayName("uploadFile: multipart upload fails immediately if invoked without active transaction synchronization")
+        void testUploadMultipartWithoutActiveTransactionFailsImmediately() throws Exception {
+            DocumentService unproxiedService = new DocumentService(
+                    documentRepository,
+                    userRepository,
+                    documentAuthorizationService,
+                    auditService,
+                    storageService,
+                    fileValidationService
+            );
+
+            Document doc = documentService.createDocument("No Tx Multipart Doc", "Desc", "alice");
+            MockMultipartFile multipartFile = new MockMultipartFile(
+                    "file",
+                    "document.pdf",
+                    "application/pdf",
+                    VALID_PDF
+            );
+
+            assertThatThrownBy(() -> unproxiedService.uploadFile(
+                    doc.getId(),
+                    multipartFile,
+                    "alice",
+                    "127.0.0.1"
+            )).isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("Secure file upload requires an active transaction synchronization context");
+
+            // Verify document metadata is untouched (hasFile remains false)
+            Document reloaded = documentRepository.findById(doc.getId()).orElseThrow();
+            assertThat(reloaded.hasFile()).isFalse();
+
+            // Verify no file was created in storage
+            try (var stream = Files.list(storageService.resolvePath(UUID.randomUUID()).getParent())) {
+                assertThat(stream.toList()).isEmpty();
+            }
         }
     }
 }

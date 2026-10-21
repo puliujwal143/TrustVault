@@ -56,8 +56,20 @@ class AuthenticationIntegrationTest {
     @Autowired
     private PlatformTransactionManager transactionManager;
 
+    @Autowired(required = false)
+    private com.trustvault.repository.DocumentShareRepository documentShareRepository;
+
+    @Autowired(required = false)
+    private com.trustvault.repository.DocumentRepository documentRepository;
+
     @BeforeEach
     void setUp() {
+        if (documentShareRepository != null) {
+            documentShareRepository.deleteAll();
+        }
+        if (documentRepository != null) {
+            documentRepository.deleteAll();
+        }
         userRepository.deleteAll();
     }
 

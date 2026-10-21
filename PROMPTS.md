@@ -236,3 +236,83 @@ Implementation of two targeted security improvements identified during the read-
 ### Limitations & Deferred Scope
 - Document permissions, secure file storage/uploads, and database-backed audit logging remain deferred to Phase 2+.
 - `SessionRegistryImpl` remains an in-memory single-node solution; distributed session synchronization across multi-instance clusters is not supported in Phase 1.
+
+---
+
+## Date: 2026-10-21 (Session 5 — Phase 2 Milestone 2.1 Data Model & Schema Foundation)
+
+### Context & Task
+Implementation of Milestone 2.1 for Phase 2: Data Model and Database Schema Foundation for secure document ownership and sharing. Scoped strictly to entities, repositories, schema DDL, and persistence tests without implementing authorization services, controllers, file storage, or audit logging.
+
+### User Prompt
+> I approve the overall Phase 2 design, with the following refinements.
+>
+> Security decisions:
+> 1. A storage UUID is an identifier, never a substitute for authorization.
+> 2. Return 404 for documents the caller has no permission to discover. Return 403 when an existing grantee attempts an operation not allowed by their grant. Keep this behavior consistent across endpoints and tests.
+> 3. Resolve the authenticated caller from Spring Security and user records from the database. Never trust client-supplied owner IDs or user IDs to establish identity.
+> 4. Preserve the existing username normalization and uniqueness behavior. Do not introduce case-insensitive usernames unless the current schema and authentication code are deliberately migrated to support them.
+> 5. ROLE_ADMIN must not bypass document authorization.
+> 6. Re-check current grants on each document operation. Do not cache permissions in the HTTP session.
+> 7. Keep file uploads, file streaming, and audit-event persistence out of this milestone.
+>
+> Implement **Milestone 2.1 — Data Model & Schema Foundation only**.
+>
+> Tasks:
+> - Inspect the existing source, schema.sql, test configuration, and Git status before editing.
+> - Add `SharePermission` with READ and EDIT.
+> - Add the `Document` entity with a required owner, UUID storage key, validated title, optional bounded description, and creation/update timestamps.
+> - Add the `DocumentShare` entity linking a document to a grantee with a permission and grant timestamp.
+> - Add the corresponding repositories.
+> - Add the tables, foreign keys, uniqueness constraints, and indexes to schema.sql, preserving the existing app_users schema.
+> - Ensure JPA mappings match the SQL schema and the existing PostgreSQL/H2 test setup.
+> - Prevent duplicate grants using a database unique constraint on document_id and grantee_id. Plan for an existing grant to be updated when the owner changes READ to EDIT or EDIT to READ.
+> - Prevent owners from creating a share grant to themselves at the service/API layer later; do not pretend the data-model milestone already enforces this.
+> - Review entity equals/hashCode behavior carefully; do not introduce unstable equality for persisted entities.
+> - Add focused repository/persistence tests for document ownership mapping, share persistence, foreign-key/unique constraints where practical, and entity lifecycle behavior.
+> - Do not implement authorization services or controllers yet.
+> - Do not run destructive database operations, commit, or push.
+> - Update PROMPTS.md with the actual prompt, implementation, issues, fixes, and real test results.
+> - Run `.\mvnw.cmd test` and report the exact output summary.
+>
+> Before editing, report any blocking compatibility issue you find. After implementation, list changed files, explain the code in beginner-friendly language, and identify what remains unverified. Do not claim security features are implemented until they actually are.
+
+### Issues Identified & Technical Solutions
+
+1. **Foreign Key Integrity in Multi-Class Test Execution**:
+   - *Issue*: `DocumentPersistenceTest` created document records with foreign keys referencing `app_users`. When `AuthenticationIntegrationTest` executed subsequently in the same test run, its `setUp()` called `userRepository.deleteAll()`, failing with a referential integrity constraint violation on `fk_documents_owner` (`FKD1DQC3GVAO4T4H7JKDH5WKBYJ`).
+   - *Fix*: Added `@AfterEach` in `DocumentPersistenceTest` to delete `document_shares`, `documents`, and `app_users` after every test. Additionally updated `AuthenticationIntegrationTest.setUp()` to defensively clean up document tables before users.
+
+2. **Hibernate Schema Generation Missing Cascade Action**:
+   - *Issue*: In `DocumentShare`, mapping `document` and `grantee` with `@ManyToOne` without Hibernate cascade action caused H2 DDL generated via `create-drop` to omit `ON DELETE CASCADE`. When `documentRepository.delete(doc)` was invoked in cascade deletion tests, the database rejected the delete with a foreign key violation (`FK2Q6I3YMOBF720H0XQ3GDVHABN`).
+   - *Fix*: Added `@org.hibernate.annotations.OnDelete(action = OnDeleteAction.CASCADE)` to `document` and `grantee` in `DocumentShare.java`, aligning Hibernate's generated DDL with the explicit `ON DELETE CASCADE` definitions in `schema.sql`.
+
+3. **JPA Entity Identity & Set Invariance**:
+   - *Issue*: Basing entity equality on auto-generated primary keys causes mutable hash codes when transitioning from transient (`id == null`) to persistent (`id != null`), corrupting hash buckets in collections like `HashSet`.
+   - *Fix*: Implemented `equals()` and `hashCode()` for `Document` based on its immutable `UUID storageKey`, and for `DocumentShare` based on its natural composite key `(document, grantee)`. Added tests verifying `set.contains()` remains true across `saveAndFlush()` transitions.
+
+### Files Created & Modified
+- `src/main/java/com/trustvault/entity/SharePermission.java` (Created: enum with READ and EDIT and permission hierarchy helpers)
+- `src/main/java/com/trustvault/entity/Document.java` (Created: JPA entity with owner FK, UUID storageKey, validated title, bounded description, and timestamps)
+- `src/main/java/com/trustvault/entity/DocumentShare.java` (Created: JPA entity linking document and grantee with permission and unique constraint)
+- `src/main/java/com/trustvault/repository/DocumentRepository.java` (Created: repository with derived and JPQL accessible documents queries)
+- `src/main/java/com/trustvault/repository/DocumentShareRepository.java` (Created: repository for share lookup, existence checks, and deletion)
+- `src/main/resources/schema.sql` (Updated: added DDL for `documents` and `document_shares` tables, foreign keys, unique constraints, and indexes)
+- `src/test/java/com/trustvault/repository/DocumentPersistenceTest.java` (Created: 9 persistence tests covering ownership, shares, constraints, updates, Set stability, cascade deletion, and accessible queries)
+- `src/test/java/com/trustvault/security/AuthenticationIntegrationTest.java` (Updated: defensive cleanup of document tables in setUp)
+- `PROMPTS.md` (Updated: Session 5 audit entry)
+
+### Build & Verification Results
+- Command: `.\mvnw.cmd test`
+- Tests Executed: 31 total across 4 test classes:
+  - `HealthControllerTest`: 2 tests passed.
+  - `DocumentPersistenceTest`: 9 tests passed.
+  - `AuthenticationIntegrationTest`: 19 tests passed.
+  - `TrustVaultApplicationTests`: 1 test passed.
+- Failures: 0, Errors: 0, Skipped: 0.
+- Build Status: `BUILD SUCCESS` (20.002 s).
+
+### Limitations & Deferred Scope
+- Authorization services (`DocumentAuthorizationService`, `DocumentService`, `DocumentShareService`) and REST controllers (`/api/documents`) are not yet implemented (scheduled for Milestones 2.2 and 2.3).
+- Service-level rule preventing owners from sharing documents with themselves is deferred to Milestone 2.2.
+- File uploads, disk blob storage, streaming endpoints, and audit-event logging remain deferred to Phase 3.

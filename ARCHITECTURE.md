@@ -122,3 +122,16 @@ Enterprise security and regulatory compliance require a tamper-resistant record 
 | No static document exposure | **Enforced** | No static upload mapping; private storage path configured |
 | Exception sanitization | **Enforced** | `GlobalExceptionHandler` strips stack traces from client responses |
 | Document-level authorization | **Deferred** | Explicitly scoped for subsequent phases |
+
+---
+
+## 7. Session Management & Scalability Limitations
+
+TrustVault tracks active authenticated user sessions using Spring Security's `SessionRegistry` and `HttpSessionEventPublisher`:
+- **Tracking & Interception**: Authenticated sessions are registered upon login. Inbound requests pass through `ConcurrentSessionFilter`, which checks if a session has been flagged as expired and redirects expired sessions to `/login?expired`.
+- **Transaction-Safe Revocation**: When credentials change (`UserService.changePassword()`), active sessions are expired via Spring's `TransactionSynchronizationManager.afterCommit()`. This guarantees sessions are only invalidated after the database update transaction successfully commits, preventing premature revocation if a transaction rolls back.
+
+### Architectural Limitation: In-Memory Session Storage
+- The current implementation configures `SessionRegistryImpl`, which maintains all session tracking state **in-memory within the local JVM heap** (using concurrent hash maps).
+- **Single-Node Monolith Scope**: This design is suited for single-instance monolithic deployments (such as the current hackathon environment).
+- **Horizontal Scalability Limitation**: In a horizontally scaled deployment with multiple application instances behind a load balancer, `SessionRegistryImpl` does not synchronize session state across nodes. A password change processed on Instance A marks sessions expired only within Instance A's JVM memory. Sessions active on Instance B or subsequent requests routed to other instances will not be revoked unless a distributed session repository (such as Spring Session with Redis or a shared database) is introduced. Cross-instance session revocation is **not guaranteed** in a multi-instance cluster under this baseline architecture.

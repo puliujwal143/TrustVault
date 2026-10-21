@@ -3,6 +3,7 @@ package com.trustvault.repository;
 import com.trustvault.entity.Document;
 import com.trustvault.entity.DocumentShare;
 import com.trustvault.entity.User;
+import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 
@@ -20,11 +21,13 @@ public interface DocumentShareRepository extends JpaRepository<DocumentShare, Lo
 
     /**
      * Finds an active share grant for a specific document and grantee username.
+     * Eagerly fetches grantee and document to prevent LazyInitializationException outside sessions.
      *
      * @param documentId      the ID of the document
      * @param granteeUsername the username of the grantee
      * @return an Optional containing the DocumentShare if present
      */
+    @EntityGraph(attributePaths = {"grantee", "document"})
     Optional<DocumentShare> findByDocumentIdAndGranteeUsername(Long documentId, String granteeUsername);
 
     /**
@@ -38,10 +41,12 @@ public interface DocumentShareRepository extends JpaRepository<DocumentShare, Lo
 
     /**
      * Finds all active share grants for a given document ID.
+     * Eagerly fetches grantee to prevent LazyInitializationException outside sessions.
      *
      * @param documentId the ID of the document
      * @return list of share grants for the document
      */
+    @EntityGraph(attributePaths = {"grantee", "document"})
     List<DocumentShare> findByDocumentId(Long documentId);
 
     /**

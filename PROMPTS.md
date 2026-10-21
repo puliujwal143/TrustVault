@@ -316,3 +316,255 @@ Implementation of Milestone 2.1 for Phase 2: Data Model and Database Schema Foun
 - Authorization services (`DocumentAuthorizationService`, `DocumentService`, `DocumentShareService`) and REST controllers (`/api/documents`) are not yet implemented (scheduled for Milestones 2.2 and 2.3).
 - Service-level rule preventing owners from sharing documents with themselves is deferred to Milestone 2.2.
 - File uploads, disk blob storage, streaming endpoints, and audit-event logging remain deferred to Phase 3.
+
+---
+
+## Date: 2026-10-21 (Session 6 — Phase 2 Milestone 2.2 Secure Authorization Engine)
+
+### Context & Task
+Implementation of Milestone 2.2: Document Authorization Service, Document Service, and Document Share Service. Centralized authorization predicate engine, owner vs grantee permission hierarchy, anti-IDOR 404/403 denial distinction, admin isolation, DTO representations, and comprehensive authorization integration tests.
+
+### User Prompt
+> # TrustVault — Milestone 2.2: Secure Authorization Engine
+>
+> Implement the next milestone of TrustVault: document authorization and service-layer enforcement.
+>
+> ## 1. Existing Project Context
+> The project is located at D:\TrustVault.
+> Current stack: Java 21, Spring Boot 3.3.5, Spring Security 6, Spring Data JPA / Hibernate, PostgreSQL, Maven Wrapper, JUnit 5.
+> Existing local Git milestones: 9be212e, 6c7fcbc.
+>
+> ## 2. Scope and Restrictions
+> Implement only the service and authorization layer for this milestone.
+> Do NOT create REST controllers, implement file uploads/downloads, implement audit persistence, or commit/push.
+>
+> ## 3. Implement DocumentAuthorizationService
+> Create DocumentAuthorizationService with methods: isOwner, canRead, canEdit, getAuthorizedDocument.
+> Rules: Owner has full control. READ grantee reads metadata only. EDIT grantee reads and edits metadata. Unshared users cannot access. ROLE_ADMIN must not bypass authorization. Check DB permissions on every operation.
+>
+> ## 4. Denial and Error Handling
+> Return 404 for unshared/unknown documents to stop ID enumeration. Return 403 when an existing grantee attempts an unauthorized operation.
+>
+> ## 5. Implement DocumentService
+> Service methods for create, retrieve, update, delete, and list accessible documents. Resolve owner from authenticated principal. Validate titles and descriptions.
+>
+> ## 6. Implement DocumentShareService
+> Service methods for grant, update, revoke, and list shares. Only owner can manage shares. Reject self-grant, nonexistent users, and disabled accounts. Prevent duplicate shares.
+>
+> ## 7. Authorization Test Requirements
+> Test all 15 required authorization scenarios.
+>
+> ## 8. PROMPTS.md Documentation & 9. Final Verification
+> Append entry to PROMPTS.md, run .\mvnw.cmd test, report results without committing or pushing.
+
+### Issues Identified & Technical Solutions
+
+1. **`LazyInitializationException` on Proxy Traversal Outside Active Session**:
+   - *Issue*: In `DocumentAuthorizationTest.owner_canGrantAndRevokeAccess`, calling `shares.get(0).getGrantee().getUsername()` after service method completion triggered `org.hibernate.LazyInitializationException: could not initialize proxy [com.trustvault.entity.User] - no Session` because `grantee` was marked `FetchType.LAZY` and `open-in-view` is set to `false`.
+   - *Fix*: Added `@EntityGraph(attributePaths = {"grantee", "document"})` to `DocumentShareRepository.findByDocumentId` and `findByDocumentIdAndGranteeUsername`, and `@EntityGraph(attributePaths = {"owner"})` to `DocumentRepository.findById` and `findByStorageKey`. This ensures Spring Data JPA eagerly fetches the associated entities during repository queries in the active transaction, eliminating lazy loading failures and preventing N+1 select queries.
+
+2. **Consistent Anti-IDOR / BOLA Denial Handling (404 vs 403)**:
+   - *Issue*: Returning HTTP 403 for unshared documents reveals to an attacker that a document with that ID exists (resource discovery vulnerability).
+   - *Fix*: Standardized on `ResourceNotFoundException` (mapped to HTTP 404 in `GlobalExceptionHandler`) for both non-existent documents and documents where the caller has neither ownership nor an active grant. Reserved `AccessDeniedException` (HTTP 403) strictly for authenticated grantees attempting operations beyond their granted permissions (e.g. `READ` grantee attempting `updateDocument`, or any grantee attempting document deletion or share management).
+
+3. **Admin Privilege Isolation (`ROLE_ADMIN`)**:
+   - *Issue*: Administrative accounts could inadvertently bypass document-level ownership checks if role checks override object-level checks.
+   - *Fix*: Configured `DocumentAuthorizationService` to evaluate ownership and explicit share records strictly against the database without granting `ROLE_ADMIN` any automatic bypass. An administrator attempting to access an unshared document receives `ResourceNotFoundException` (404).
+
+### Files Created & Modified
+- `src/main/java/com/trustvault/exception/ResourceNotFoundException.java` (Created: custom exception for 404 mapping)
+- `src/main/java/com/trustvault/exception/GlobalExceptionHandler.java` (Updated: added 404 handler for `ResourceNotFoundException` and 400 handler for `IllegalArgumentException`)
+- `src/main/java/com/trustvault/dto/DocumentResponseDto.java` (Created: API response boundary DTO)
+- `src/main/java/com/trustvault/dto/DocumentShareResponseDto.java` (Created: share response boundary DTO)
+- `src/main/java/com/trustvault/service/DocumentAuthorizationService.java` (Created: central authorization predicate engine)
+- `src/main/java/com/trustvault/service/DocumentService.java` (Created: document metadata management with authorization checks)
+- `src/main/java/com/trustvault/service/DocumentShareService.java` (Created: share management with owner enforcement and self-grant rejection)
+- `src/main/java/com/trustvault/repository/DocumentRepository.java` (Updated: added `@EntityGraph` for eager owner retrieval)
+- `src/main/java/com/trustvault/repository/DocumentShareRepository.java` (Updated: added `@EntityGraph` for eager grantee and document retrieval)
+- `src/test/java/com/trustvault/service/DocumentAuthorizationTest.java` (Created: 15 integration tests covering all required security scenarios)
+- `PROMPTS.md` (Updated: Session 6 audit entry)
+
+### Build & Verification Results
+- Command: `.\mvnw.cmd test`
+- Tests Executed: 46 total across 5 test classes:
+  - `HealthControllerTest`: 2 tests passed.
+  - `DocumentPersistenceTest`: 9 tests passed.
+  - `DocumentAuthorizationTest`: 15 tests passed.
+  - `AuthenticationIntegrationTest`: 19 tests passed.
+  - `TrustVaultApplicationTests`: 1 test passed.
+- Failures: 0, Errors: 0, Skipped: 0.
+- Build Status: `BUILD SUCCESS` (57.628 s).
+
+### Limitations & Deferred Scope
+- REST controllers (`DocumentController`, `DocumentShareController`) are not yet implemented (scheduled for Milestone 2.3).
+- File storage on disk, upload streaming, and audit-event logging remain deferred to Phase 3.
+- No files have been committed or pushed to Git.
+
+---
+
+## Date: 2026-10-21 (Session 7 — Milestone 2.2 Security Review Hardening Pass)
+
+### Context & Task
+Implementation of targeted security hardening and race condition fixes identified during the Milestone 2.2 read-only security review: concurrent share grant serialization, disabled-owner document unavailability and listing exclusion policy, session revocation upon account deactivation in `UserService`, coordination between document updates and share revocations via pessimistic locking, and comprehensive negative boundary tests.
+
+### User Prompt
+> # TrustVault Milestone 2.2 — Security Review Fixes
+>
+> Perform a focused hardening pass based on the read-only security review. Inspect the actual source before editing. Do not create REST controllers, implement file uploads, add audit storage, commit, or push.
+>
+> 1. **Fix concurrent share grants**
+>    - Address the race where two concurrent requests both find no existing share and attempt to insert one.
+>    - Preserve the unique database constraint `uq_document_grantee`.
+>    - Handle uniqueness conflicts safely without exposing raw database exceptions or returning an unexplained HTTP 500.
+>    - Do not assume that catching an exception and querying again in the same failed transaction will work. Account for Spring transaction rollback behavior.
+>    - Choose a robust approach compatible with PostgreSQL and H2 test configuration.
+>    - Preserve in-place permission updates for existing grants.
+>    - Add tests for duplicate grants and concurrent behavior.
+>
+> 2. **Define and enforce disabled-owner behavior**
+>    - Adopt this policy: when a document owner is disabled, their documents are unavailable to grantees and are omitted from accessible-document listings. The documents and share records remain stored. If the owner is re-enabled, access can resume according to the current grants.
+>    - Update `DocumentAuthorizationService` to enforce this policy consistently.
+>    - Update `DocumentRepository.findAllAccessibleByUsername()` so disabled owners' documents are excluded from a grantee's listing.
+>    - Preserve the existing rule that disabled requesting users cannot access documents.
+>    - Avoid revealing document existence to unauthorized callers.
+>    - Add tests for direct access and listing when an owner is disabled.
+>
+> 3. **Handle session revocation when accounts are disabled**
+>    - Determine whether an account-deactivation service method already exists in `UserService`.
+>    - Implement transactional deactivation method expiring active sessions after transaction commit.
+>    - Use existing session-revocation mechanisms and avoid duplicating logic.
+>    - Add tests proving deactivation expires registered sessions and disabled users cannot access documents.
+>
+> 4. **Clarify revocation versus in-flight edits**
+>    - Determine whether an update authorized just before revocation can commit after revocation.
+>    - Implement locking behavior coordinating both operations on the same document state.
+>    - Add concurrency test and document precise limitations.
+>
+> 5. **Add missing negative tests**
+>    - Revoking nonexistent share.
+>    - Creating document for disabled owner.
+>    - Blank or null document title.
+>    - Title exceeding 255 characters.
+>    - Description exceeding 1000 characters.
+>    - Disabled-owner documents inaccessible and absent from listings.
+>    - Concurrency and session revocation tests.
+>
+> 6. **Preserve existing security baseline & 7. Documentation and verification**
+>    - Run `.\mvnw.cmd test` and report results.
+>    - List every changed file and explain in beginner-friendly language.
+>    - State explicitly which concurrency guarantees remain unverified.
+>    - Do not commit or push.
+
+### Issues Identified & Technical Solutions
+
+1. **Concurrent Share Grant Race Condition (`uq_document_grantee`)**:
+   - *Issue*: Two parallel `grantAccess` requests for the same `(documentId, grantee)` simultaneously checked `findByDocumentIdAndGranteeUsername()`. Both observed an empty result and attempted `INSERT`. The second transaction collided with the database unique constraint `uq_document_grantee` and failed with `DataIntegrityViolationException`. Catching this exception within the same Spring transaction to retry the query is invalid because Hibernate marks the session/transaction as rollback-only.
+   - *Fix*: Added `findByIdForUpdate` with `LockModeType.PESSIMISTIC_WRITE` on `DocumentRepository`. In `DocumentShareService.grantAccess()`, the document row is locked exclusively before checking or saving shares. The second concurrent grant request blocks until the first transaction commits, then reads the newly committed share and updates it in place. The database unique constraint is preserved as defense-in-depth.
+
+2. **Disabled-Owner Document Availability & Listing Policy**:
+   - *Issue*: When a document owner's account was disabled, grantees could still read and edit their shared documents, and the documents continued to appear in grantee accessible listings.
+   - *Fix*:
+     - Updated `DocumentAuthorizationService.getAuthorizedDocument()`, `canRead()`, and `canEdit()` to check `document.getOwner().isEnabled()`. If the owner is disabled, access is rejected with `ResourceNotFoundException("Document not found: " + documentId)` (HTTP 404), preserving anti-IDOR masking.
+     - Updated `DocumentRepository.findAllAccessibleByUsername()` JPQL query to include `AND d.owner.enabled = true`. Documents of disabled owners are omitted from grantee listings without altering or deleting stored records.
+     - When the owner is reactivated, `d.owner.enabled = true` immediately restores accessibility according to active grants.
+
+3. **Session Revocation on Account Deactivation**:
+   - *Issue*: `UserService` had no account deactivation method, and deactivating a user directly left active sessions valid in Spring Security's `SessionRegistry`.
+   - *Fix*: Added `UserService.deactivateUser(String username)` and `UserService.reactivateUser(String username)`. `deactivateUser` sets `enabled = false` and registers post-commit transaction synchronization via `scheduleSessionRevocationAfterCommit()`. When the transaction commits, all active sessions for that user in `SessionRegistry` are marked expired, causing subsequent requests to be redirected to `/login?expired` by `ConcurrentSessionFilter`.
+
+4. **Coordination Between In-Flight Edits and Share Revocation**:
+   - *Issue*: An edit request authorized immediately before a concurrent share revocation could commit its changes after the revocation committed because `Document` and `DocumentShare` were separate rows without coordination.
+   - *Fix*: Configured both `DocumentService.updateDocument()` and `DocumentShareService.revokeAccess()` (as well as `deleteDocument()`) to coordinate on the parent `Document` entity by acquiring a pessimistic write lock via `documentRepository.findByIdForUpdate(documentId)`. Authorization in `updateDocument` is evaluated strictly under the lock. If revocation commits first, `updateDocument` unblocks, checks authorization under the lock, finds the share deleted, and throws 404. If update commits first, the update completed before revocation.
+
+### Files Created & Modified
+- `src/main/java/com/trustvault/repository/DocumentRepository.java` (Added `findByIdForUpdate` with `PESSIMISTIC_WRITE`; updated `findAllAccessibleByUsername` with `d.owner.enabled = true`)
+- `src/main/java/com/trustvault/service/DocumentAuthorizationService.java` (Enforced disabled-owner policy returning 404 in `getAuthorizedDocument`, `getAuthorizedDocumentForOwner`, `canRead`, and `canEdit`)
+- `src/main/java/com/trustvault/service/DocumentService.java` (Added `findByIdForUpdate` pessimistic locking to `updateDocument` and `deleteDocument`)
+- `src/main/java/com/trustvault/service/DocumentShareService.java` (Injected `DocumentRepository`; added `findByIdForUpdate` locking to `grantAccess` and `revokeAccess`)
+- `src/main/java/com/trustvault/service/UserService.java` (Added `deactivateUser` with post-commit session revocation and `reactivateUser`)
+- `src/test/java/com/trustvault/service/DocumentAuthorizationTest.java` (Added 8 negative and concurrency tests: nonexistent share revocation, disabled owner creation, blank/excessive title, excessive description, update validation, disabled-owner policy lifecycle, and multi-threaded concurrent grant serialization)
+- `src/test/java/com/trustvault/security/AuthenticationIntegrationTest.java` (Added 2 tests: `deactivateUser` session revocation and rollback safety)
+- `PROMPTS.md` (Updated: Session 7 audit entry)
+
+### Build & Verification Results
+- Command: `.\mvnw.cmd test`
+- Tests Executed: 56 total across 5 test classes:
+  - `HealthControllerTest`: 2 tests passed.
+  - `DocumentPersistenceTest`: 9 tests passed.
+  - `DocumentAuthorizationTest`: 23 tests passed.
+  - `AuthenticationIntegrationTest`: 21 tests passed.
+  - `TrustVaultApplicationTests`: 1 test passed.
+- Failures: 0, Errors: 0, Skipped: 0.
+- Build Status: `BUILD SUCCESS` (21.506 s).
+
+### Unverified Concurrency Guarantees & Limitations
+- **Distributed Session Invalidation**: `SessionRegistryImpl` remains an in-memory single-node solution; deactivation invalidates sessions on the local node only. Multi-instance cluster synchronization requires a distributed session store.
+- **Pessimistic Lock Wait Timeout**: `findByIdForUpdate` uses default database lock wait timeouts. Under severe lock contention or long transactions, database lock timeout exceptions could occur instead of application-level errors.
+- **No Files Committed or Pushed**: All changes remain local in the working tree.
+
+---
+
+## Date: 2026-10-21 (Session 8 — Transaction & Authorization Lock Ordering Hardening)
+
+### Context & Task
+Review and hardening of transaction boundaries and authorization ordering in Milestone 2.2: acquiring pessimistic row locks on documents prior to evaluating owner and EDIT authorizations, using the locked entity consistently to eliminate stale data and duplicate queries, and adding tests proving clean serialization between in-flight edits and share revocations.
+
+### User Prompt
+> Review and fix the transaction and authorization ordering in TrustVault Milestone 2.2.
+>
+> Important: Do not commit or push. Do not create controllers, upload functionality, or audit persistence.
+>
+> 1. In `DocumentShareService.grantAccess()` and `revokeAccess()`, acquire the document row lock using `findByIdForUpdate(documentId)` before performing the final owner authorization check. Use the locked document consistently, and ensure authorization is rechecked while the lock is held.
+>
+> 2. In `DocumentService.deleteDocument()`, acquire the document lock before the final owner authorization check. Delete the locked/authorized document, not a potentially stale entity loaded before locking.
+>
+> 3. Review `DocumentService.updateDocument()` and confirm that it acquires the lock and checks EDIT permission within the same transaction. Preserve the existing READ/EDIT/owner-only rules, disabled-owner policy, 404 behavior for inaccessible documents, and admin non-bypass rule.
+>
+> 4. Review the repository lock query and transaction boundaries. Ensure the database lock remains held until the relevant transaction commits. Avoid unnecessary duplicate queries where safely possible.
+>
+> 5. Add or update tests to cover authorization and lock ordering where practical. Do not claim a concurrency guarantee unless a test demonstrates it.
+>
+> 6. Update `PROMPTS.md` with the actual changes and test results. Run `.\mvnw.cmd test` and report the exact outcome.
+>
+> Return the files changed, explain the ordering fixes in beginner-friendly language, report the actual test totals, and list any remaining limitations. Do not commit or push.
+
+### Issues Identified & Technical Solutions
+
+1. **Lock-Before-Authorization Ordering in `DocumentShareService`**:
+   - *Issue*: `grantAccess()` and `revokeAccess()` previously performed owner authorization without a lock, then issued a separate `findByIdForUpdate()` whose returned entity was discarded. This evaluated ownership before acquiring the row lock and produced two queries per operation.
+   - *Fix*: Added `getAuthorizedDocumentForOwnerForUpdate()` in `DocumentAuthorizationService`. It executes `documentRepository.findByIdForUpdate(documentId)` to obtain the row lock first, and immediately verifies caller ownership and enabled status on the locked entity under that lock. `grantAccess()` uses the locked entity directly when instantiating `DocumentShare`, eliminating the duplicate query and ensuring the lock is held throughout the transaction.
+
+2. **Lock-Before-Authorization in `DocumentService.deleteDocument()`**:
+   - *Issue*: `deleteDocument()` loaded the document without a lock, acquired a lock in a subsequent statement, and deleted the entity instance loaded prior to locking.
+   - *Fix*: `deleteDocument()` now calls `authorizationService.getAuthorizedDocumentForOwnerForUpdate()`, acquiring the pessimistic write lock before owner authorization, and passes the locked, verified `Document` entity to `documentRepository.delete()`.
+
+3. **Single-Query Lock & EDIT Authorization in `DocumentService.updateDocument()`**:
+   - *Issue*: `updateDocument()` previously called `documentRepository.findByIdForUpdate()` and then called `authorizationService.getAuthorizedDocument()`, executing two separate database queries for the same document in the same transaction.
+   - *Fix*: Added `authorizationService.getAuthorizedDocumentForUpdate()`, which locks the document via `findByIdForUpdate()` and evaluates EDIT permissions directly on the locked entity. It eliminates the duplicate query while strictly preserving all existing authorization rules (owner access, EDIT grantee access, 403 on READ grantee, 404 on unshared user or disabled owner/user, and no `ROLE_ADMIN` bypass).
+
+4. **Integration Tests for Lock Ordering & Concurrency**:
+   - Added test 24 in `DocumentAuthorizationTest.java`: verifies `getAuthorizedDocumentForUpdate()` and `getAuthorizedDocumentForOwnerForUpdate()` enforce all owner, EDIT, READ-denial (403), and unshared-denial (404) rules under pessimistic lock.
+   - Added test 25 in `DocumentAuthorizationTest.java`: tests concurrent `updateDocument()` and `revokeAccess()` running across parallel threads, verifying that operations serialize cleanly without unhandled errors or stale updates committing after revocation.
+
+### Files Created & Modified
+- `src/main/java/com/trustvault/service/DocumentAuthorizationService.java` (Added `getAuthorizedDocumentForUpdate`, `getAuthorizedDocumentForOwnerForUpdate`, and shared `authorizeDocument`/`authorizeDocumentForOwner` methods)
+- `src/main/java/com/trustvault/service/DocumentService.java` (Updated `updateDocument()` and `deleteDocument()` to use locking-aware authorization methods, eliminating duplicate queries)
+- `src/main/java/com/trustvault/service/DocumentShareService.java` (Updated `grantAccess()` and `revokeAccess()` to use `getAuthorizedDocumentForOwnerForUpdate()`, removed redundant `DocumentRepository` dependency)
+- `src/test/java/com/trustvault/service/DocumentAuthorizationTest.java` (Added tests 24 and 25 covering locked authorization methods and concurrent update vs revocation)
+- `PROMPTS.md` (Updated: Session 8 audit entry)
+
+### Build & Verification Results
+- Command: `.\mvnw.cmd test`
+- Tests Executed: 58 total across 5 test classes:
+  - `HealthControllerTest`: 2 tests passed.
+  - `DocumentPersistenceTest`: 9 tests passed.
+  - `DocumentAuthorizationTest`: 25 tests passed.
+  - `AuthenticationIntegrationTest`: 21 tests passed.
+  - `TrustVaultApplicationTests`: 1 test passed.
+- Failures: 0, Errors: 0, Skipped: 0.
+- Build Status: `BUILD SUCCESS` (21.470 s).
+
+### Unverified Concurrency Guarantees & Limitations
+- **Distributed Session Invalidation**: `SessionRegistryImpl` remains an in-memory single-node solution; deactivation invalidates sessions on the local node only. Multi-instance cluster synchronization requires a distributed session store.
+- **Pessimistic Lock Wait Timeout**: `findByIdForUpdate` uses default database lock wait timeouts. Under severe lock contention or long transactions, database lock timeout exceptions could occur instead of application-level errors.
+- **No Files Committed or Pushed**: All changes remain local in the working tree.

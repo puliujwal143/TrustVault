@@ -164,6 +164,54 @@ public class UserService {
     }
 
     /**
+     * Deactivates an existing user account and revokes all active sessions post-commit.
+     *
+     * @param username Username of the account to deactivate
+     * @throws IllegalArgumentException if user is not found
+     */
+    public void deactivateUser(String username) {
+        Objects.requireNonNull(username, "Username must not be null");
+        String trimmedUsername = username.trim();
+        User user = userRepository.findByUsername(trimmedUsername)
+                .orElseThrow(() -> new IllegalArgumentException("User not found: " + trimmedUsername));
+
+        if (!user.isEnabled()) {
+            log.debug("User '{}' is already deactivated", user.getUsername());
+            return;
+        }
+
+        user.setEnabled(false);
+        userRepository.save(user);
+
+        // Security Policy: Invalidate all active sessions for this user ONLY after the deactivation transaction commits
+        scheduleSessionRevocationAfterCommit(user.getUsername());
+
+        log.info("User account '{}' successfully deactivated and active sessions scheduled for revocation", user.getUsername());
+    }
+
+    /**
+     * Reactivates a previously disabled user account.
+     *
+     * @param username Username of the account to reactivate
+     * @throws IllegalArgumentException if user is not found
+     */
+    public void reactivateUser(String username) {
+        Objects.requireNonNull(username, "Username must not be null");
+        String trimmedUsername = username.trim();
+        User user = userRepository.findByUsername(trimmedUsername)
+                .orElseThrow(() -> new IllegalArgumentException("User not found: " + trimmedUsername));
+
+        if (user.isEnabled()) {
+            log.debug("User '{}' is already active", user.getUsername());
+            return;
+        }
+
+        user.setEnabled(true);
+        userRepository.save(user);
+        log.info("User account '{}' successfully reactivated", user.getUsername());
+    }
+
+    /**
      * Schedules session revocation for the specified user after the current transaction successfully commits.
      *
      * If an active transaction synchronization is available, revocation is registered via

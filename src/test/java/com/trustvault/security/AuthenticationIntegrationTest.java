@@ -454,4 +454,67 @@ class AuthenticationIntegrationTest {
         User user = userRepository.findByUsername("quinn").orElseThrow();
         assertThat(passwordEncoder.matches("Password789!", user.getPassword())).isTrue();
     }
+
+    @Test
+    @DisplayName("Account deactivation must revoke active sessions in SessionRegistry post-commit")
+    void deactivateUser_shouldRevokeActiveSessionsInSessionRegistry() throws Exception {
+        userService.createUser("sam", "Password123!", "sam@example.com", Role.ROLE_USER);
+
+        // Authenticate via form login to establish an active session in SessionRegistry
+        MvcResult loginResult = mockMvc.perform(formLogin().user("sam").password("Password123!"))
+                .andExpect(status().isFound())
+                .andExpect(authenticated().withUsername("sam"))
+                .andReturn();
+
+        MockHttpSession session = (MockHttpSession) loginResult.getRequest().getSession(false);
+        assertThat(session).isNotNull();
+
+        // Request before deactivation using active session passes authentication filter (returns 404 for missing controller)
+        mockMvc.perform(get("/api/documents").session(session))
+                .andExpect(status().isNotFound());
+
+        // Deactivate user, which must trigger session revocation after commit
+        userService.deactivateUser("sam");
+
+        // Request after deactivation using the previous session must be intercepted by ConcurrentSessionFilter
+        // and redirected to /login?expired because the session was marked expired
+        mockMvc.perform(get("/api/documents").session(session))
+                .andExpect(status().isFound())
+                .andExpect(redirectedUrl("/login?expired"));
+    }
+
+    @Test
+    @DisplayName("Transaction-safe revocation: rolled-back account deactivation must not revoke active sessions")
+    void deactivateUser_whenTransactionRollsBack_shouldNotRevokeActiveSessions() throws Exception {
+        userService.createUser("tina", "Password123!", "tina@example.com", Role.ROLE_USER);
+
+        // Authenticate via form login to establish an active session
+        MvcResult loginResult = mockMvc.perform(formLogin().user("tina").password("Password123!"))
+                .andExpect(status().isFound())
+                .andExpect(authenticated().withUsername("tina"))
+                .andReturn();
+
+        MockHttpSession session = (MockHttpSession) loginResult.getRequest().getSession(false);
+        assertThat(session).isNotNull();
+
+        // Verify session is active before deactivation
+        mockMvc.perform(get("/api/documents").session(session))
+                .andExpect(status().isNotFound());
+
+        // Execute deactivateUser within a transaction that rolls back
+        TransactionTemplate transactionTemplate = new TransactionTemplate(transactionManager);
+        transactionTemplate.execute(status -> {
+            userService.deactivateUser("tina");
+            status.setRollbackOnly();
+            return null;
+        });
+
+        // User must still be enabled in database due to rollback
+        User user = userRepository.findByUsername("tina").orElseThrow();
+        assertThat(user.isEnabled()).isTrue();
+
+        // Session must NOT have been revoked because transaction rolled back
+        mockMvc.perform(get("/api/documents").session(session))
+                .andExpect(status().isNotFound());
+    }
 }

@@ -60,5 +60,15 @@ public enum AuditAction {
     /**
      * Authorization rejection or security policy violation.
      */
-    ACCESS_DENIED
+    ACCESS_DENIED,
+
+    /**
+     * Upload or replacement of a document file payload.
+     */
+    FILE_UPLOAD,
+
+    /**
+     * Retrieval or streaming download of a document file payload.
+     */
+    FILE_DOWNLOAD
 }

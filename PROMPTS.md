@@ -986,3 +986,99 @@ Security hardening of TrustVault Milestone 2.4 Stage 1 following the completed r
 - **Storage Service Remains Standalone**: StorageService is not yet wired to `DocumentService`, DB entities, or HTTP controllers (by design; planned for subsequent stages).
 - **Ephemeral Filesystem Limitation**: Local storage files on free cloud hosting instances reset upon container redeployments.
 - **No Files Committed or Pushed**: All changes remain local in the working tree.
+
+---
+
+## Date: 2026-10-21 (Session 14 — Milestone 2.4 Stage 2: Document File Metadata)
+
+### Context & Task
+Implementation of TrustVault Milestone 2.4 — Stage 2: Document File Metadata ONLY. Extended `Document.java` entity with nullable file metadata fields (`fileOriginalName`, `fileContentType`, `fileSize`, `fileChecksum`, `fileUploadedAt`), added `hasFile()` with zero-byte payload support and `isFileMetadataConsistent()`, updated `schema.sql` with PostgreSQL types and a non-negative check constraint, added `FILE_UPLOAD` and `FILE_DOWNLOAD` to `AuditAction`, and added comprehensive persistence and validation tests.
+
+### User Prompt
+> Proceed with Milestone 2.4 Stage 2: Document File Metadata in `D:\TrustVault`.
+>
+> The read-only plan is approved subject to these required adjustments:
+>
+> 1. Update `src/main/java/com/trustvault/entity/Document.java` with nullable fields:
+>    - `fileOriginalName`: String, max 255
+>    - `fileContentType`: String, max 100
+>    - `fileSize`: Long, non-negative when present
+>    - `fileChecksum`: String, exactly 64 hexadecimal characters when present
+>    - `fileUploadedAt`: Instant
+>
+> 2. Add a `hasFile()` helper that does not incorrectly treat a zero-byte file as absent. Define its semantics clearly and test them. Do not introduce an invariant that breaks existing metadata-only documents. Ensure the future upload workflow can enforce that metadata is either fully populated or fully absent.
+>
+> 3. Update `src/main/resources/schema.sql` with matching PostgreSQL columns and an appropriate non-negative constraint for `file_size` if compatible with the existing schema conventions. Preserve `ddl-auto: validate`. Review the existing schema initialization configuration before adding idempotent ALTER statements. Explain whether existing databases will actually receive these changes and do not claim migration support unless it is verified.
+>
+> 4. Add `FILE_UPLOAD` and `FILE_DOWNLOAD` to `AuditAction` if they do not already exist. Keep the existing audit architecture and transaction behavior unchanged.
+>
+> 5. Update the existing document persistence tests to cover:
+>    - Persisting and retrieving all file metadata.
+>    - Existing metadata-only documents with null file fields.
+>    - Attaching and updating metadata without changing `storageKey` or owner.
+>    - `hasFile()` behavior, including zero-byte metadata if supported.
+>    - Validation of invalid size and checksum where the project's validation approach supports it.
+>
+> 6. Update audit persistence tests to verify the new enum actions can be persisted and read.
+>
+> 7. Update `PROMPTS.md` with the actual Stage 2 work and real test results. Do not invent timestamps, prompts, test counts, commit hashes, or successful results.
+>
+> Scope restrictions:
+> - Do not modify files beyond the six listed unless a necessary compatibility issue is discovered. If another file must change, explain why before editing it.
+> - Do not connect StorageService to DocumentService.
+> - Do not implement upload/download controllers, multipart handling, MIME sniffing, or file streaming.
+> - Do not stage, commit, or push anything.
+> - Preserve existing authorization and security behavior.
+>
+> After implementation, run `.\mvnw.cmd test`. Report the actual result and list all changed files, design decisions, and any unresolved issues. Stop without committing or pushing.
+
+### Issues Identified & Technical Solutions
+
+1. **`hasFile()` Semantics & Zero-Byte Support**:
+   - *Requirement*: `hasFile()` must return true only when all five file metadata fields are present (`fileOriginalName`, `fileContentType`, `fileSize`, `fileChecksum`, `fileUploadedAt`), using the same all-present semantics as `isFileMetadataConsistent()`. Preserve zero-byte file support.
+   - *Solution*: Defined `hasFile()` as returning `this.fileOriginalName != null && this.fileContentType != null && this.fileSize != null && this.fileChecksum != null && this.fileUploadedAt != null`. A zero-byte file (`fileSize == 0L`) with all 5 fields populated returns `true`. If any field is missing, or for metadata-only documents, `hasFile()` returns `false`.
+   - *Consistency Helper*: Updated `isFileMetadataConsistent()` to return `allNull || hasFile()`, guaranteeing that metadata is either fully populated or fully absent.
+
+2. **Strict Argument Validation & Non-Mutation in `setFileMetadata()`**:
+   - *Requirement*: Reject invalid arguments immediately (null/blank filename, null/blank content type, null/negative size, non-64-hex checksum), trim strings, normalize checksum to lowercase, and do not mutate entity fields until all arguments pass validation.
+   - *Solution*: In `setFileMetadata()`, validated all arguments before field assignment. Validates `originalName` (not null/blank, max 255), `contentType` (not null/blank, max 100), `size` (not null, non-negative), and `checksum` (not null, matches `^[0-9a-fA-F]{64}$`). Trims strings, lowercases checksum, and defaults `uploadedAt` to `Instant.now()` if null. Mutation occurs only after all arguments are verified, preserving previous entity state if an exception is thrown.
+
+3. **Bean Validation for Nullable Checksum & Size**:
+   - Annotated `fileSize` with `@PositiveOrZero` and `fileChecksum` with `@Pattern(regexp = "^[0-9a-fA-F]{64}$")`. Standard Jakarta Bean Validation ignores `null` values by default, allowing metadata-only documents to pass validation. When values are supplied, invalid non-negative sizes (`-1L`) or malformed checksums fail Bean Validation with `ConstraintViolationException` upon `saveAndFlush()`.
+
+4. **Database Schema Evolution & `ddl-auto: validate` Preservation**:
+   - Updated `CREATE TABLE IF NOT EXISTS documents` in `schema.sql` with `file_original_name VARCHAR(255)`, `file_content_type VARCHAR(100)`, `file_size BIGINT`, `file_checksum VARCHAR(64)`, `file_uploaded_at TIMESTAMP WITH TIME ZONE`, and `CONSTRAINT chk_documents_file_size CHECK (file_size IS NULL OR file_size >= 0)`.
+   - Appended idempotent `ALTER TABLE documents ADD COLUMN IF NOT EXISTS ...` statements.
+   - *Important Database Lifecycle Clarification*: In production, `application.yml` sets `ddl-auto: validate`. Spring Boot does not automatically run `schema.sql` against external PostgreSQL instances on startup because `spring.sql.init.mode` is not enabled and no database migration engine (such as Flyway or Liquibase) is configured. Therefore, existing PostgreSQL databases will NOT automatically receive these column additions; database administrators must execute the ALTER statements manually before deploying the updated application. In automated testing, H2 creates tables directly from JPA entities via `ddl-auto: create-drop`.
+
+5. **Audit Action Enumeration**:
+   - Added `FILE_UPLOAD` and `FILE_DOWNLOAD` to `AuditAction.java`. Verified that `audit_events.action VARCHAR(50)` comfortably accommodates both values without schema alterations.
+
+### Files Created & Modified
+- `src/main/java/com/trustvault/entity/Document.java` (Modified: Added 5 file metadata fields, validation constraints, strict `hasFile()` requiring all 5 fields, `isFileMetadataConsistent()`, strict non-mutating `setFileMetadata()`, `clearFileMetadata()`, accessors, and updated `toString()`)
+- `src/main/resources/schema.sql` (Modified: Added file metadata columns, `chk_documents_file_size` check constraint, and idempotent `ALTER TABLE` statements)
+- `src/main/java/com/trustvault/audit/AuditAction.java` (Modified: Added `FILE_UPLOAD` and `FILE_DOWNLOAD` enum values)
+- `src/test/java/com/trustvault/repository/DocumentPersistenceTest.java` (Modified: Added 9 integration tests covering all metadata fields, null metadata-only docs, zero-byte payloads, attaching/updating metadata, negative size rejection, checksum regex rejection, consistency validation, incomplete metadata rejection by hasFile(), and setFileMetadata() argument validation/non-mutation)
+- `src/test/java/com/trustvault/repository/AuditEventPersistenceTest.java` (Modified: Added integration test verifying `FILE_UPLOAD` and `FILE_DOWNLOAD` action persistence and queries)
+- `PROMPTS.md` (Updated: Session 14 implementation log)
+
+### Build & Verification Results
+- Command: `.\mvnw.cmd test`
+- Tests Executed: 122 total across 9 test classes:
+  - `HealthControllerTest`: 2 tests passed.
+  - `DocumentPersistenceTest`: 18 tests passed (9 new tests added, all passed).
+  - `DocumentAuthorizationTest`: 25 tests passed.
+  - `AuditEventPersistenceTest`: 10 tests passed (1 new test added, passed).
+  - `AuditServiceTest`: 8 tests passed.
+  - `BusinessAuditIntegrationTest`: 14 tests passed.
+  - `AuthenticationIntegrationTest`: 21 tests passed.
+  - `LocalStorageServiceTest`: 23 tests (17 passed, 6 skipped).
+  - `TrustVaultApplicationTests`: 1 test passed.
+- Failures: 0, Errors: 0, Skipped: 6.
+- Build Status: `BUILD SUCCESS` (44.029 s).
+- **Explicit Note on Skipped Tests**: The 6 skipped tests remain the symlink defense tests in `LocalStorageServiceTest` that explicitly skip via `Assumptions.assumeTrue(...)` on Windows hosts lacking `SeCreateSymbolicLinkPrivilege`.
+
+### Unresolved Issues & Technical Limitations
+- **Manual Database Evolution Required for Existing PostgreSQL Databases**: Because Spring Boot runs with `ddl-auto: validate` and without an automated migration framework (Flyway/Liquibase), existing PostgreSQL databases must have the ALTER statements executed manually by an administrator prior to starting the application with the new entity mappings.
+- **StorageService Remains Decoupled**: `StorageService` is not yet connected to `DocumentService`, and no upload/download controllers or file streaming endpoints are implemented (planned for Stage 3 and Stage 4).
+- **No Files Committed or Pushed**: All changes remain local in the working tree.

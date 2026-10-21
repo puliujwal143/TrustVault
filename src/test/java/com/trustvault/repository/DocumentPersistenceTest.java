@@ -13,6 +13,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.dao.DataIntegrityViolationException;
 
+import java.time.Instant;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
@@ -269,5 +270,296 @@ class DocumentPersistenceTest {
         // EDIT permits reading AND editing
         assertThat(SharePermission.EDIT.allowsRead()).isTrue();
         assertThat(SharePermission.EDIT.allowsEdit()).isTrue();
+    }
+
+    @Test
+    @DisplayName("File metadata: should persist and retrieve all file metadata fields correctly")
+    void document_fileMetadata_shouldPersistAndRetrieveAllFields() {
+        User owner = persistUser("file_user_1", "fileuser1@example.com");
+        Document doc = new Document("Quarterly Financials", "Q3 Report", owner);
+
+        Instant uploadTime = Instant.now();
+        String validChecksum = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+
+        doc.setFileOriginalName("financial_report_q3.pdf");
+        doc.setFileContentType("application/pdf");
+        doc.setFileSize(2048576L);
+        doc.setFileChecksum(validChecksum);
+        doc.setFileUploadedAt(uploadTime);
+
+        assertThat(doc.hasFile()).isTrue();
+        assertThat(doc.isFileMetadataConsistent()).isTrue();
+
+        Document savedDoc = documentRepository.saveAndFlush(doc);
+
+        Optional<Document> fetched = documentRepository.findById(savedDoc.getId());
+        assertThat(fetched).isPresent();
+        Document retrieved = fetched.get();
+
+        assertThat(retrieved.getFileOriginalName()).isEqualTo("financial_report_q3.pdf");
+        assertThat(retrieved.getFileContentType()).isEqualTo("application/pdf");
+        assertThat(retrieved.getFileSize()).isEqualTo(2048576L);
+        assertThat(retrieved.getFileChecksum()).isEqualTo(validChecksum);
+        assertThat(retrieved.getFileUploadedAt()).isNotNull();
+        assertThat(retrieved.hasFile()).isTrue();
+        assertThat(retrieved.isFileMetadataConsistent()).isTrue();
+    }
+
+    @Test
+    @DisplayName("File metadata: metadata-only documents should have null file fields and hasFile() false")
+    void document_fileMetadata_shouldAllowNullsForMetadataOnlyDocuments() {
+        User owner = persistUser("file_user_2", "fileuser2@example.com");
+        Document doc = new Document("Empty Note", "No attachment", owner);
+
+        Document saved = documentRepository.saveAndFlush(doc);
+
+        Optional<Document> fetched = documentRepository.findById(saved.getId());
+        assertThat(fetched).isPresent();
+        Document retrieved = fetched.get();
+
+        assertThat(retrieved.getFileOriginalName()).isNull();
+        assertThat(retrieved.getFileContentType()).isNull();
+        assertThat(retrieved.getFileSize()).isNull();
+        assertThat(retrieved.getFileChecksum()).isNull();
+        assertThat(retrieved.getFileUploadedAt()).isNull();
+        assertThat(retrieved.hasFile()).isFalse();
+        assertThat(retrieved.isFileMetadataConsistent()).isTrue();
+    }
+
+    @Test
+    @DisplayName("File metadata: zero-byte file payload must be treated as present by hasFile()")
+    void document_fileMetadata_zeroByteFile_shouldBeTreatedAsPresent() {
+        User owner = persistUser("file_user_3", "fileuser3@example.com");
+        Document doc = new Document("Empty File Document", "Contains zero-byte payload", owner);
+
+        String zeroByteSha256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+        doc.setFileMetadata("empty.txt", "text/plain", 0L, zeroByteSha256, Instant.now());
+
+        // A zero-byte file is valid and hasFile() must return true
+        assertThat(doc.hasFile()).isTrue();
+        assertThat(doc.getFileSize()).isEqualTo(0L);
+
+        Document saved = documentRepository.saveAndFlush(doc);
+        Optional<Document> fetched = documentRepository.findById(saved.getId());
+        assertThat(fetched).isPresent();
+        assertThat(fetched.get().hasFile()).isTrue();
+        assertThat(fetched.get().getFileSize()).isEqualTo(0L);
+        assertThat(fetched.get().getFileOriginalName()).isEqualTo("empty.txt");
+    }
+
+    @Test
+    @DisplayName("File metadata: attaching and updating metadata must preserve storageKey and owner")
+    void document_fileMetadata_attachingAndUpdating_preservesStorageKeyAndOwner() {
+        User owner = persistUser("file_user_4", "fileuser4@example.com");
+        Document doc = documentRepository.saveAndFlush(new Document("Draft Contract", "Legal draft", owner));
+
+        UUID originalStorageKey = doc.getStorageKey();
+        Long originalDocId = doc.getId();
+        Long originalOwnerId = doc.getOwner().getId();
+
+        assertThat(doc.hasFile()).isFalse();
+
+        // 1. Attach file metadata
+        doc.setFileMetadata(
+                "contract_v1.docx",
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                102400L,
+                "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+                Instant.now()
+        );
+        Document savedV1 = documentRepository.saveAndFlush(doc);
+
+        assertThat(savedV1.getId()).isEqualTo(originalDocId);
+        assertThat(savedV1.getStorageKey()).isEqualTo(originalStorageKey);
+        assertThat(savedV1.getOwner().getId()).isEqualTo(originalOwnerId);
+        assertThat(savedV1.hasFile()).isTrue();
+        assertThat(savedV1.getFileOriginalName()).isEqualTo("contract_v1.docx");
+
+        // 2. Update/replace file metadata
+        savedV1.setFileMetadata(
+                "contract_v2.docx",
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                204800L,
+                "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210",
+                Instant.now()
+        );
+        Document savedV2 = documentRepository.saveAndFlush(savedV1);
+
+        assertThat(savedV2.getId()).isEqualTo(originalDocId);
+        assertThat(savedV2.getStorageKey()).isEqualTo(originalStorageKey);
+        assertThat(savedV2.getOwner().getId()).isEqualTo(originalOwnerId);
+        assertThat(savedV2.hasFile()).isTrue();
+        assertThat(savedV2.getFileOriginalName()).isEqualTo("contract_v2.docx");
+        assertThat(savedV2.getFileSize()).isEqualTo(204800L);
+        assertThat(savedV2.getFileChecksum()).isEqualTo("fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210");
+    }
+
+    @Test
+    @DisplayName("Validation: negative file size must fail validation")
+    void document_fileMetadata_rejectsNegativeFileSize() {
+        User owner = persistUser("file_user_5", "fileuser5@example.com");
+        Document doc = new Document("Negative Size Doc", "Invalid", owner);
+
+        doc.setFileOriginalName("file.pdf");
+        doc.setFileContentType("application/pdf");
+        doc.setFileSize(-1L); // Violates @PositiveOrZero
+        doc.setFileChecksum("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
+
+        assertThatThrownBy(() -> documentRepository.saveAndFlush(doc))
+                .isInstanceOf(jakarta.validation.ConstraintViolationException.class);
+    }
+
+    @Test
+    @DisplayName("Validation: invalid checksum format must fail validation")
+    void document_fileMetadata_rejectsInvalidChecksumFormat() {
+        User owner = persistUser("file_user_6", "fileuser6@example.com");
+        Document doc = new Document("Invalid Checksum Doc", "Invalid", owner);
+
+        doc.setFileOriginalName("file.pdf");
+        doc.setFileContentType("application/pdf");
+        doc.setFileSize(100L);
+        doc.setFileChecksum("not-a-valid-sha256-hex-digest"); // Violates 64-hex regex
+
+        assertThatThrownBy(() -> documentRepository.saveAndFlush(doc))
+                .isInstanceOf(jakarta.validation.ConstraintViolationException.class);
+    }
+
+    @Test
+    @DisplayName("File metadata consistency: isFileMetadataConsistent() reflects partial vs full metadata")
+    void document_fileMetadata_consistencyCheck() {
+        User owner = persistUser("file_user_7", "fileuser7@example.com");
+        Document doc = new Document("Consistency Test", "Testing partial metadata", owner);
+
+        // All null -> consistent
+        assertThat(doc.isFileMetadataConsistent()).isTrue();
+
+        // Partially populated -> inconsistent
+        doc.setFileOriginalName("partial.txt");
+        assertThat(doc.isFileMetadataConsistent()).isFalse();
+
+        // Fully populated -> consistent
+        doc.setFileMetadata("full.txt", "text/plain", 10L, "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", Instant.now());
+        assertThat(doc.isFileMetadataConsistent()).isTrue();
+
+        // Cleared -> consistent
+        doc.clearFileMetadata();
+        assertThat(doc.isFileMetadataConsistent()).isTrue();
+        assertThat(doc.hasFile()).isFalse();
+    }
+
+    @Test
+    @DisplayName("File metadata: incomplete metadata (missing any of the 5 fields) must return hasFile() false and isFileMetadataConsistent() false")
+    void document_fileMetadata_incompleteMetadata_shouldReturnHasFileFalse() {
+        User owner = persistUser("file_user_8", "fileuser8@example.com");
+        Document doc = new Document("Incomplete Doc", "Testing incomplete states", owner);
+
+        String checksum = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+        Instant now = Instant.now();
+
+        // 4 of 5 fields: missing fileUploadedAt
+        doc.setFileOriginalName("file.pdf");
+        doc.setFileContentType("application/pdf");
+        doc.setFileSize(100L);
+        doc.setFileChecksum(checksum);
+        doc.setFileUploadedAt(null);
+        assertThat(doc.hasFile()).isFalse();
+        assertThat(doc.isFileMetadataConsistent()).isFalse();
+
+        // 4 of 5 fields: missing fileContentType
+        doc.setFileUploadedAt(now);
+        doc.setFileContentType(null);
+        assertThat(doc.hasFile()).isFalse();
+        assertThat(doc.isFileMetadataConsistent()).isFalse();
+
+        // 4 of 5 fields: missing fileOriginalName
+        doc.setFileContentType("application/pdf");
+        doc.setFileOriginalName(null);
+        assertThat(doc.hasFile()).isFalse();
+        assertThat(doc.isFileMetadataConsistent()).isFalse();
+
+        // 4 of 5 fields: missing fileChecksum
+        doc.setFileOriginalName("file.pdf");
+        doc.setFileChecksum(null);
+        assertThat(doc.hasFile()).isFalse();
+        assertThat(doc.isFileMetadataConsistent()).isFalse();
+
+        // 4 of 5 fields: missing fileSize
+        doc.setFileChecksum(checksum);
+        doc.setFileSize(null);
+        assertThat(doc.hasFile()).isFalse();
+        assertThat(doc.isFileMetadataConsistent()).isFalse();
+
+        // All 5 fields present -> hasFile() is true and consistent
+        doc.setFileSize(100L);
+        assertThat(doc.hasFile()).isTrue();
+        assertThat(doc.isFileMetadataConsistent()).isTrue();
+    }
+
+    @Test
+    @DisplayName("setFileMetadata: rejects invalid arguments immediately and preserves entity state without mutation")
+    void setFileMetadata_rejectsInvalidArgumentsAndPreservesEntityState() {
+        User owner = persistUser("file_user_9", "fileuser9@example.com");
+        Document doc = new Document("Validation Doc", "Testing setFileMetadata validation", owner);
+
+        String validChecksum = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+        Instant now = Instant.now();
+
+        // 1. Null or blank filename
+        assertThatThrownBy(() -> doc.setFileMetadata(null, "text/plain", 100L, validChecksum, now))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Original filename must not be null or blank");
+        assertThatThrownBy(() -> doc.setFileMetadata("   ", "text/plain", 100L, validChecksum, now))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Original filename must not be null or blank");
+        assertThat(doc.hasFile()).isFalse();
+
+        // 2. Null or blank content type
+        assertThatThrownBy(() -> doc.setFileMetadata("report.txt", null, 100L, validChecksum, now))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Content type must not be null or blank");
+        assertThatThrownBy(() -> doc.setFileMetadata("report.txt", "  ", 100L, validChecksum, now))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Content type must not be null or blank");
+        assertThat(doc.hasFile()).isFalse();
+
+        // 3. Null or negative size
+        assertThatThrownBy(() -> doc.setFileMetadata("report.txt", "text/plain", null, validChecksum, now))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("File size must not be null and must be non-negative");
+        assertThatThrownBy(() -> doc.setFileMetadata("report.txt", "text/plain", -1L, validChecksum, now))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("File size must not be null and must be non-negative");
+        assertThat(doc.hasFile()).isFalse();
+
+        // 4. Null or invalid checksum
+        assertThatThrownBy(() -> doc.setFileMetadata("report.txt", "text/plain", 100L, null, now))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("File checksum must not be null");
+        assertThatThrownBy(() -> doc.setFileMetadata("report.txt", "text/plain", 100L, "short-checksum", now))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("File checksum must be a 64-character hexadecimal SHA-256 hash");
+        assertThatThrownBy(() -> doc.setFileMetadata("report.txt", "text/plain", 100L, validChecksum + "extra", now))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("File checksum must be a 64-character hexadecimal SHA-256 hash");
+        assertThat(doc.hasFile()).isFalse();
+
+        // 5. Successful setFileMetadata with trimming and checksum normalization
+        String upperChecksum = "E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855";
+        doc.setFileMetadata("  document.pdf  ", "  application/pdf  ", 500L, upperChecksum, now);
+
+        assertThat(doc.hasFile()).isTrue();
+        assertThat(doc.getFileOriginalName()).isEqualTo("document.pdf");
+        assertThat(doc.getFileContentType()).isEqualTo("application/pdf");
+        assertThat(doc.getFileSize()).isEqualTo(500L);
+        assertThat(doc.getFileChecksum()).isEqualTo("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"); // Lowercased!
+
+        // 6. Failed update does NOT mutate previously valid state
+        assertThatThrownBy(() -> doc.setFileMetadata("new.pdf", "application/pdf", -5L, validChecksum, now))
+                .isInstanceOf(IllegalArgumentException.class);
+
+        // Verify entity retained its previous valid metadata
+        assertThat(doc.hasFile()).isTrue();
+        assertThat(doc.getFileOriginalName()).isEqualTo("document.pdf");
+        assertThat(doc.getFileSize()).isEqualTo(500L);
     }
 }

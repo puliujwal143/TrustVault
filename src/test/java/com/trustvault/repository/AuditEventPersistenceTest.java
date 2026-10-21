@@ -326,4 +326,54 @@ class AuditEventPersistenceTest {
 
         assertThat(set).contains(event2);
     }
+
+    @Test
+    @DisplayName("AuditAction persistence: should persist and query events with FILE_UPLOAD and FILE_DOWNLOAD actions")
+    void auditEvent_shouldPersistAndQueryFileUploadAndDownloadActions() {
+        UUID storageKey = UUID.randomUUID();
+
+        AuditEvent uploadEvent = new AuditEvent(
+                "alice",
+                AuditAction.FILE_UPLOAD,
+                50L,
+                storageKey,
+                null,
+                AuditOutcome.SUCCESS,
+                "192.168.1.50",
+                "filename=report.pdf,size=102400"
+        );
+        AuditEvent savedUpload = auditEventRepository.save(uploadEvent);
+
+        AuditEvent downloadEvent = new AuditEvent(
+                "bob",
+                AuditAction.FILE_DOWNLOAD,
+                50L,
+                storageKey,
+                null,
+                AuditOutcome.SUCCESS,
+                "192.168.1.60",
+                "filename=report.pdf"
+        );
+        AuditEvent savedDownload = auditEventRepository.save(downloadEvent);
+
+        Optional<AuditEvent> fetchedUpload = auditEventRepository.findById(savedUpload.getId());
+        assertThat(fetchedUpload).isPresent();
+        assertThat(fetchedUpload.get().getAction()).isEqualTo(AuditAction.FILE_UPLOAD);
+        assertThat(fetchedUpload.get().getDocumentId()).isEqualTo(50L);
+        assertThat(fetchedUpload.get().getDocumentStorageKey()).isEqualTo(storageKey);
+
+        Optional<AuditEvent> fetchedDownload = auditEventRepository.findById(savedDownload.getId());
+        assertThat(fetchedDownload).isPresent();
+        assertThat(fetchedDownload.get().getAction()).isEqualTo(AuditAction.FILE_DOWNLOAD);
+        assertThat(fetchedDownload.get().getDocumentId()).isEqualTo(50L);
+        assertThat(fetchedDownload.get().getDocumentStorageKey()).isEqualTo(storageKey);
+
+        List<AuditEvent> uploadEvents = auditEventRepository.findByActionOrderByTimestampDesc(AuditAction.FILE_UPLOAD);
+        assertThat(uploadEvents).hasSize(1);
+        assertThat(uploadEvents.get(0).getActorUsername()).isEqualTo("alice");
+
+        List<AuditEvent> downloadEvents = auditEventRepository.findByActionOrderByTimestampDesc(AuditAction.FILE_DOWNLOAD);
+        assertThat(downloadEvents).hasSize(1);
+        assertThat(downloadEvents.get(0).getActorUsername()).isEqualTo("bob");
+    }
 }

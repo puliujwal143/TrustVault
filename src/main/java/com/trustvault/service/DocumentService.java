@@ -1,5 +1,6 @@
 package com.trustvault.service;
 
+import com.trustvault.audit.AuditAction;
 import com.trustvault.entity.Document;
 import com.trustvault.entity.SharePermission;
 import com.trustvault.entity.User;
@@ -8,12 +9,14 @@ import com.trustvault.repository.DocumentRepository;
 import com.trustvault.repository.UserRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
+import java.util.UUID;
 
 /**
  * Business service managing document metadata operations and ownership lifecycle.
@@ -27,6 +30,8 @@ import java.util.Objects;
  * 4. List operations strictly isolate query results to documents owned by or explicitly shared
  *    with the requesting user.
  * 5. Uses Spring declarative transaction boundaries (@Transactional).
+ * 6. Emits structured audit events on document creation, read, update, and deletion within the
+ *    same transaction.
  */
 @Service
 @Transactional
@@ -37,14 +42,25 @@ public class DocumentService {
     private final DocumentRepository documentRepository;
     private final UserRepository userRepository;
     private final DocumentAuthorizationService authorizationService;
+    private final AuditService auditService;
 
     public DocumentService(
             DocumentRepository documentRepository,
             UserRepository userRepository,
             DocumentAuthorizationService authorizationService) {
+        this(documentRepository, userRepository, authorizationService, null);
+    }
+
+    @Autowired
+    public DocumentService(
+            DocumentRepository documentRepository,
+            UserRepository userRepository,
+            DocumentAuthorizationService authorizationService,
+            AuditService auditService) {
         this.documentRepository = documentRepository;
         this.userRepository = userRepository;
         this.authorizationService = authorizationService;
+        this.auditService = auditService;
     }
 
     /**
@@ -74,6 +90,18 @@ public class DocumentService {
         Document document = new Document(validatedTitle, validatedDescription, owner);
         Document savedDocument = documentRepository.save(document);
 
+        if (auditService != null) {
+            auditService.recordSuccess(
+                    AuditAction.DOCUMENT_CREATE,
+                    normalizedOwner,
+                    savedDocument.getId(),
+                    savedDocument.getStorageKey(),
+                    null,
+                    null,
+                    null
+            );
+        }
+
         log.info("Document '{}' (ID: {}) created by user '{}'", savedDocument.getTitle(), savedDocument.getId(), normalizedOwner);
         return savedDocument;
     }
@@ -87,7 +115,19 @@ public class DocumentService {
      */
     @Transactional(readOnly = true)
     public Document getDocument(Long documentId, String requestingUsername) {
-        return authorizationService.getAuthorizedDocument(documentId, requestingUsername, SharePermission.READ);
+        Document document = authorizationService.getAuthorizedDocument(documentId, requestingUsername, SharePermission.READ);
+        if (auditService != null) {
+            auditService.recordSuccess(
+                    AuditAction.DOCUMENT_READ,
+                    requestingUsername != null ? requestingUsername.trim() : null,
+                    document.getId(),
+                    document.getStorageKey(),
+                    null,
+                    null,
+                    null
+            );
+        }
+        return document;
     }
 
     /**
@@ -114,6 +154,19 @@ public class DocumentService {
         document.setDescription(validatedDescription);
 
         Document updatedDocument = documentRepository.save(document);
+
+        if (auditService != null) {
+            auditService.recordSuccess(
+                    AuditAction.DOCUMENT_UPDATE,
+                    requestingUsername.trim(),
+                    updatedDocument.getId(),
+                    updatedDocument.getStorageKey(),
+                    null,
+                    null,
+                    null
+            );
+        }
+
         log.info("Document '{}' (ID: {}) updated by user '{}'", updatedDocument.getTitle(), updatedDocument.getId(), requestingUsername);
         return updatedDocument;
     }
@@ -131,8 +184,23 @@ public class DocumentService {
 
         // Lock document and authorize owner under the acquired lock, then delete the locked document entity
         Document document = authorizationService.getAuthorizedDocumentForOwnerForUpdate(documentId, requestingUsername);
+        Long docId = document.getId();
+        UUID storageKey = document.getStorageKey();
 
         documentRepository.delete(document);
+
+        if (auditService != null) {
+            auditService.recordSuccess(
+                    AuditAction.DOCUMENT_DELETE,
+                    requestingUsername.trim(),
+                    docId,
+                    storageKey,
+                    null,
+                    null,
+                    null
+            );
+        }
+
         log.info("Document '{}' (ID: {}) deleted by owner '{}'", document.getTitle(), document.getId(), requestingUsername);
     }
 

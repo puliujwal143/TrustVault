@@ -568,3 +568,235 @@ Review and hardening of transaction boundaries and authorization ordering in Mil
 - **Distributed Session Invalidation**: `SessionRegistryImpl` remains an in-memory single-node solution; deactivation invalidates sessions on the local node only. Multi-instance cluster synchronization requires a distributed session store.
 - **Pessimistic Lock Wait Timeout**: `findByIdForUpdate` uses default database lock wait timeouts. Under severe lock contention or long transactions, database lock timeout exceptions could occur instead of application-level errors.
 - **No Files Committed or Pushed**: All changes remain local in the working tree.
+
+---
+
+## Date: 2026-10-21 (Session 9 — Milestone 2.3 Stage 1: Audit Schema and Core Data Model)
+
+### Context & Task
+Implementation of TrustVault Milestone 2.3 — Stage 1: Audit Schema and Core Data Model. Defined the `audit_events` relational table and indexes in `schema.sql`, created `AuditAction` and `AuditOutcome` enums, implemented the immutable `AuditEvent` JPA entity with Hibernate `@Immutable`, created the append-only `AuditEventRepository` extending Spring Data's `Repository` marker interface, and validated behavior with persistence integration tests.
+
+### User Prompt
+> Proceed with TrustVault Milestone 2.3 — Stage 1: Audit Schema and Core Data Model ONLY.
+>
+> Use the approved refined design. Inspect the existing code and schema.sql before editing.
+>
+> Implement:
+> 1. Add the audit_events table and indexes to schema.sql. Do not add a foreign key from audit_events.document_id to documents, so document deletion never requires modifying or deleting historical audit rows.
+> 2. Create AuditAction.java with the planned action enum values.
+> 3. Create AuditOutcome.java with SUCCESS, DENIED, and FAILURE.
+> 4. Create AuditEvent.java as a JPA entity mapped to audit_events. Use Hibernate @Immutable, immutable fields, no public setters, UUID event ID, and an Instant timestamp.
+> 5. Create AuditEventRepository.java extending Spring Data's Repository marker interface, exposing only save and necessary read methods. Do not expose delete or update operations.
+> 6. Keep document_id and document_storage_key as independent audit snapshots. Preserve audit rows when documents are deleted.
+> 7. Do not log sensitive data or add arbitrary details fields beyond the approved schema.
+> 8. Follow the project's existing Java and JPA conventions. Ensure schema initialization remains compatible with PostgreSQL and the existing H2 test setup.
+>
+> Scope restrictions:
+> - Do not integrate auditing into DocumentService, DocumentShareService, UserService, or DocumentAuthorizationService yet.
+> - Do not implement AuditService or denial logging yet.
+> - Do not create controllers or APIs.
+> - Do not stage, commit, or push.
+> - Do not claim database-level tamper resistance from @Immutable alone.
+>
+> Add focused tests for entity persistence, repository read/save behavior, and schema compatibility where practical. Run .\mvnw.cmd test and report the exact results. Update PROMPTS.md with the actual work and test results. List every changed file and any unresolved issues.
+
+### Issues Identified & Technical Solutions
+
+1. **Audit Preservation Across Document Deletions**:
+   - *Issue*: A traditional foreign key constraint with `ON DELETE CASCADE` destroys audit records when a document is deleted. `ON DELETE RESTRICT` forbids document deletion once audited. `ON DELETE SET NULL` requires issuing `UPDATE` statements against `audit_events`, violating the append-only, tamper-resistant requirement and erasing document ID history.
+   - *Fix*: Configured `audit_events.document_id` as an unconstrained logical reference (`BIGINT`) paired with the immutable `document_storage_key` (`UUID`). When a document is deleted, no SQL `UPDATE` or `DELETE` is issued against `audit_events`. Existing audit rows permanently preserve both the numeric document ID and the storage UUID.
+
+2. **Tamper-Resistant Application Layer via Minimal Repository API**:
+   - *Issue*: Extending `JpaRepository` or `CrudRepository` automatically exposes mutating operations (`delete`, `deleteById`, `deleteAll`, `saveAllAndFlush`), allowing application services to alter or purge audit logs.
+   - *Fix*: Extended Spring Data's root `Repository<AuditEvent, Long>` marker interface. Only `save()` and read-only query methods were declared. Reflection tests verify that zero delete, remove, or update methods exist on the repository interface.
+
+3. **Hibernate Entity Immutability**:
+   - *Issue*: Ordinary JPA entities allow in-memory field mutation that gets committed to the database during flush/commit dirty checking.
+   - *Fix*: Annotated `AuditEvent` with `@org.hibernate.annotations.Immutable`, marked all columns `updatable = false`, and omitted public setters. Verified via integration test that modifying loaded entity fields in a managed session does not generate SQL `UPDATE` queries.
+
+4. **Bean Validation vs. Data Integrity Exceptions**:
+   - *Issue*: Attempting to persist entities with null required fields triggered Bean Validation's `jakarta.validation.ConstraintViolationException` during Hibernate's `preInsert` listener rather than Spring's translated `DataIntegrityViolationException`.
+   - *Fix*: Updated test assertion to catch `ConstraintViolationException`, properly asserting validation failure on required audit fields.
+
+### Files Created & Modified
+- `src/main/resources/schema.sql` (Updated: added `audit_events` table and 6 performance indexes)
+- `src/main/java/com/trustvault/audit/AuditAction.java` (Created: 11 action enum values)
+- `src/main/java/com/trustvault/audit/AuditOutcome.java` (Created: SUCCESS, DENIED, FAILURE)
+- `src/main/java/com/trustvault/audit/AuditEvent.java` (Created: immutable JPA entity mapped to `audit_events`)
+- `src/main/java/com/trustvault/repository/AuditEventRepository.java` (Created: append-only Spring Data repository)
+- `src/test/java/com/trustvault/repository/AuditEventPersistenceTest.java` (Created: 9 integration tests covering persistence, queries, deletion survival, immutability, and reflection)
+- `PROMPTS.md` (Updated: Session 9 audit entry)
+
+### Build & Verification Results
+- Command: `.\mvnw.cmd test`
+- Tests Executed: 67 total across 6 test classes:
+  - `HealthControllerTest`: 2 tests passed.
+  - `DocumentPersistenceTest`: 9 tests passed.
+  - `DocumentAuthorizationTest`: 25 tests passed.
+  - `AuditEventPersistenceTest`: 9 tests passed.
+  - `AuthenticationIntegrationTest`: 21 tests passed.
+  - `TrustVaultApplicationTests`: 1 test passed.
+- Failures: 0, Errors: 0, Skipped: 0.
+- Build Status: `BUILD SUCCESS` (21.670 s).
+
+### Unresolved Issues & Technical Limitations
+- **Database-Level Privilege Separation**: Hibernate `@Immutable` and repository method omission protect against application-level modifications during standard ORM workflows. They do not prevent raw native SQL updates (`createNativeQuery`) or direct database modification by users with superuser credentials. Production PostgreSQL environments require database role hardening (`REVOKE UPDATE, DELETE, TRUNCATE ON audit_events FROM trustvault_app`).
+- **Service-Layer Integration Pending**: Auditing is not yet wired into `DocumentService`, `DocumentShareService`, `DocumentAuthorizationService`, or `UserService` (scoped for Stage 2 & 3).
+- **No Files Committed or Pushed**: All changes remain local in the working tree.
+
+---
+
+## Date: 2026-10-21 (Session 10 — Milestone 2.3 Stage 2: AuditService Engine)
+
+### Context & Task
+Implementation of TrustVault Milestone 2.3 — Stage 2: AuditService Engine. Implemented `AuditService` orchestrating transactional audit recording, same-transaction business event rollback consistency, isolated autonomous security-denial logging with connection-pool safeguards, privacy sanitization, and administrative read query operations.
+
+### User Prompt
+> We have completed TrustVault Milestone 2.3 — Stage 1: Audit Schema and Core Data Model.
+>
+> Now inspect the current project and implement Milestone 2.3 — Stage 2: AuditService Engine ONLY.
+>
+> Requirements:
+> 1. Inspect AuditEvent, AuditEventRepository, the transaction configuration, datasource connection-pool settings, and existing service transaction boundaries before making changes.
+> 2. Implement AuditService methods to record audit events using the existing AuditAction and AuditOutcome enums.
+> 3. Successful business audit events must participate in the same transaction as the business operation, so a rollback also rolls back its SUCCESS audit event.
+> 4. Design security-denial logging carefully. REQUIRES_NEW does not release the connection held by an outer transaction, so explain and account for possible connection-pool exhaustion before choosing the implementation.
+> 5. Never log passwords, session IDs, CSRF tokens, document titles, descriptions, file contents, or arbitrary user-controlled strings.
+> 6. Preserve the append-only repository design. Do not add repository update or delete methods.
+> 7. Do not integrate auditing into DocumentService, DocumentShareService, UserService, or DocumentAuthorizationService yet.
+> 8. Do not create controllers or API endpoints.
+> 9. Add focused tests for audit persistence, transaction rollback, denial-event transaction behavior, and relevant failure cases.
+> 10. Update PROMPTS.md with the actual work and exact test results.
+> 11. Run .\mvnw.cmd test and report the exact test count, failures, errors, skipped tests, and BUILD result.
+> 12. Do not stage, commit, or push any changes.
+>
+> When finished, report the implementation decisions, every changed file, test results, and unresolved issues. If a critical transaction-design issue prevents safe implementation, explain it before proceeding rather than hiding it.
+
+### Issues Identified & Technical Solutions
+
+1. **Atomicity & Phantom Success Prevention via `Propagation.REQUIRED`**:
+   - *Requirement*: Audit events recording successful business operations must commit or roll back with the business transaction.
+   - *Solution*: `AuditService.recordEvent()` and `recordSuccess()` use `@Transactional(propagation = Propagation.REQUIRED)`. When invoked within an active business transaction, the audit record is written within the same database transaction. If the business mutation fails or rolls back, the database rolls back the `SUCCESS` audit record atomically. Tested via `recordSuccess_shouldRollbackWhenBusinessTransactionRollsBack`.
+
+2. **Security Denial Survival & Connection Pool Deadlock Mitigation (`Propagation.REQUIRES_NEW`)**:
+   - *Issue*: Recording security denials requires the audit event to commit and survive even when the caller's transaction is subsequently aborted by an authorization exception (403/404). However, `Propagation.REQUIRES_NEW` suspends the outer transaction while keeping its physical JDBC connection pinned to the calling thread. If HikariCP pool size is smaller than the concurrent thread demand ($PoolSize < 2N$), thread pool exhaustion and deadlock can occur.
+   - *Solution*:
+     a) `AuditService.recordSecurityDenial()` executes a single, atomic `save()` in an isolated transaction that commits immediately, holding the second connection for only a few milliseconds.
+     b) Added fail-safe error handling: if connection acquisition or database insert fails during denial logging, an error is logged to SLF4J and the method returns `Optional.empty()` without rethrowing, ensuring that pool issues never mask, bypass, or alter the security denial decision.
+     c) Documented production pool sizing requirement ($PoolSize \ge 2 \times MaxWorkerThreads$) for deployments utilizing nested autonomous transactions.
+     d) Tested via `recordSecurityDenial_inNewTransaction_shouldSurviveOuterTransactionRollback`.
+
+3. **Privacy & Input Sanitization Guardrails**:
+   - *Requirement*: Never log passwords, session IDs, CSRF tokens, document titles, descriptions, or raw user-controlled strings.
+   - *Solution*: `AuditService` accepts discrete resource IDs (`documentId`, `documentStorageKey`) and enum types (`AuditAction`, `AuditOutcome`). All string metadata (`actorUsername`, `targetUsername`, `clientIp`, `details`) is strictly length-bounded (`MAX_USERNAME_LENGTH = 50`, `MAX_IP_LENGTH = 45`, `MAX_DETAILS_LENGTH = 500`) and sanitized by normalizing newlines, carriage returns, and tabs to spaces to prevent log forging.
+
+### Files Created & Modified
+- `src/main/java/com/trustvault/service/AuditService.java` (Created: AuditService engine with `recordEvent`, `recordSuccess`, `recordSecurityDenial`, and read queries)
+- `src/test/java/com/trustvault/service/AuditServiceTest.java` (Created: 8 integration tests covering same-transaction commit, rollback isolation, denial survival in REQUIRES_NEW, standalone denial, validation, sanitization, and query pagination)
+- `PROMPTS.md` (Updated: Session 10 audit entry)
+
+### Build & Verification Results
+- Command: `.\mvnw.cmd test`
+- Tests Executed: 75 total across 7 test classes:
+  - `HealthControllerTest`: 2 tests passed.
+  - `DocumentPersistenceTest`: 9 tests passed.
+  - `DocumentAuthorizationTest`: 25 tests passed.
+  - `AuditEventPersistenceTest`: 9 tests passed.
+  - `AuditServiceTest`: 8 tests passed.
+  - `AuthenticationIntegrationTest`: 21 tests passed.
+  - `TrustVaultApplicationTests`: 1 test passed.
+- Failures: 0, Errors: 0, Skipped: 0.
+- Build Status: `BUILD SUCCESS` (28.230 s).
+
+### Unresolved Issues & Technical Limitations
+- **Connection Pool Sizing in High-Concurrency Environments**: When `recordSecurityDenial` runs in `REQUIRES_NEW` within an active transaction, the thread holds two connections. In small pool configurations (e.g. 10 connections), no more than 5 concurrent threads can execute nested denial logging simultaneously without queueing for connections. In production, HikariCP maximum pool size should be sized to at least $2 \times TomcatWorkerThreads$.
+- **Service Integration Pending (Stage 3)**: Auditing is not yet wired into `DocumentService`, `DocumentShareService`, `DocumentAuthorizationService`, or `UserService` (scoped for Stage 3).
+- **No Files Committed or Pushed**: All changes remain local in the working tree.
+
+---
+
+## Date: 2026-10-21 (Session 11 — Milestone 2.3 Stage 3: Business-Service Audit Integration)
+
+### Context & Task
+Implementation of TrustVault Milestone 2.3 — Stage 3: Business-Service Audit Integration. Wired audit events across all business services (`DocumentService`, `DocumentShareService`, `UserService`, and `DocumentAuthorizationService`), ensuring same-transaction rollback consistency for successful mutations, safe autonomous `REQUIRES_NEW` denial logging at the authorization boundary, collection query isolation, strict privacy guardrails, and comprehensive integration testing.
+
+### User Prompt
+> Implement TrustVault Milestone 2.3 — Stage 3: Business-Service Audit Integration.
+>
+> First inspect the existing services, AuditService, AuditAction, AuditOutcome, transaction boundaries, and tests. Follow the current architecture and avoid unrelated refactoring.
+>
+> Scope:
+> 1. Integrate successful audit events into DocumentService:
+>    - DOCUMENT_CREATE
+>    - DOCUMENT_READ
+>    - DOCUMENT_UPDATE
+>    - DOCUMENT_DELETE
+> 2. Integrate successful audit events into DocumentShareService:
+>    - SHARE_GRANT when a new share is created
+>    - SHARE_UPDATE when an existing permission is changed
+>    - SHARE_REVOKE when a share is removed
+> 3. Integrate account lifecycle and credential events into UserService:
+>    - USER_DEACTIVATE
+>    - USER_REACTIVATE
+>    - PASSWORD_CHANGE
+> 4. Integrate ACCESS_DENIED recording at the appropriate authorization boundary in DocumentAuthorizationService. Preserve the existing 404 anti-enumeration behavior for unshared documents and the existing 403 behavior for forbidden actions by known grantees. Do not change authorization decisions merely to produce audit events.
+> 5. Successful mutation audit events must use the same transaction as their business operations. A rolled-back operation must not leave a committed SUCCESS event.
+> 6. Invoke recordSecurityDenial through the injected AuditService Spring proxy. Catch failures at the authorization boundary so denial-audit failures do not replace the original authorization exception. Do not assume REQUIRES_NEW releases the outer transaction's connection; document the remaining connection-pool limitation.
+> 7. Do not record a successful READ until authorization has succeeded. Avoid logging one event per item when listing collections. Do not expose audit history through a controller or API in this stage.
+> 8. Never log passwords, session identifiers, CSRF tokens, document titles, descriptions, file contents, or arbitrary user-controlled text. Use only approved event metadata.
+> 9. Add tests covering successful event creation, rollback atomicity, share grant/update/revoke distinctions, user lifecycle events, authorized reads, and denial logging for forbidden and nonexistent-resource cases. Preserve existing tests and security behavior.
+> 10. Update PROMPTS.md with the actual implementation, issues, and exact test results.
+>
+> Run .\mvnw.cmd test and report exact counts for tests, failures, errors, skipped tests, and build status.
+>
+> Do not stage, commit, or push anything. Do not create controllers or upload functionality. List every changed file and unresolved limitations.
+
+### Issues Identified & Technical Solutions
+
+1. **Multiple Constructors & Spring `@Autowired` Ambiguity**:
+   - *Issue*: Adding overloaded constructors accepting `AuditService` alongside existing 3-arg constructors caused Spring's dependency injection container to fail at boot with `BeanCreationException: No default constructor found`.
+   - *Solution*: Explicitly annotated the 4-arg constructor in `DocumentAuthorizationService`, `DocumentService`, `DocumentShareService`, and `UserService` with `@Autowired`. The 3-arg constructors were preserved for backwards compatibility with direct unit test instantiations.
+
+2. **Mutation Transaction Atomicity & Rollback Consistency (`Propagation.REQUIRED`)**:
+   - *Requirement*: A rolled-back operation must never leave a committed `SUCCESS` audit event.
+   - *Solution*: Business mutation operations (`DOCUMENT_CREATE`, `DOCUMENT_UPDATE`, `DOCUMENT_DELETE`, `SHARE_GRANT`, `SHARE_UPDATE`, `SHARE_REVOKE`, `USER_DEACTIVATE`, `USER_REACTIVATE`, `PASSWORD_CHANGE`) invoke `auditService.recordSuccess()`. Because `recordSuccess()` participates in the caller's transaction (`Propagation.REQUIRED`), any business transaction rollback automatically rolls back the associated audit row. Verified via `rollbackAtomicity_shouldRollbackAuditEventWhenMutationFails` and `rollbackAtomicity_shouldRollbackUpdateEventWhenUpdateFails`.
+
+3. **Authorized READ Auditing Timing & Collection Query Isolation**:
+   - *Requirement*: Do not log successful read events until authorization has succeeded; do not emit individual events when listing collections.
+   - *Solution*: In `DocumentService.getDocument()`, `authorizationService.getAuthorizedDocument()` is evaluated first; only if authorization succeeds is `DOCUMENT_READ` emitted. If authorization fails (throwing 404 or 403), read logging is skipped and denial logging takes over. Collection listing methods (`listAccessibleDocuments`, `listShares`) deliberately do not emit per-item audit events, preventing log flooding and query overhead.
+
+4. **Security Denial Auditing & Boundary Defense at Authorization Layer**:
+   - *Requirement*: Record `ACCESS_DENIED` while preserving 404 anti-enumeration for unshared documents and 403 for forbidden actions by known grantees. Denial logging failures must not replace or alter the authorization exception.
+   - *Solution*: In `DocumentAuthorizationService`, `auditSecurityDenial()` delegates to `auditService.recordSecurityDenial()` via the injected Spring proxy (`REQUIRES_NEW`), persisting denial events even when the caller rolls back. The call is wrapped in a defensive `try-catch` block at the boundary to ensure that any transient persistence or pool failure during denial logging is logged to SLF4J but never replaces or alters the primary `ResourceNotFoundException` (404) or `AccessDeniedException` (403).
+
+5. **Privacy Guardrails & Data Sanitization**:
+   - *Requirement*: Never log passwords, session identifiers, CSRF tokens, document titles, descriptions, file contents, or arbitrary user-controlled text.
+   - *Solution*: Document titles and descriptions are completely omitted from audit event payloads. Passwords (both current and new) are never passed to audit methods. Only discrete entity IDs, immutable UUID storage keys, usernames, standardized reason strings, and enum permission names (`READ`, `EDIT`) are logged, with inputs strictly length-bounded and control-character sanitized.
+
+### Files Created & Modified
+- `src/main/java/com/trustvault/service/DocumentService.java` (Updated: Added `@Autowired` constructor and audit integration for `DOCUMENT_CREATE`, `DOCUMENT_READ`, `DOCUMENT_UPDATE`, `DOCUMENT_DELETE`)
+- `src/main/java/com/trustvault/service/DocumentShareService.java` (Updated: Added `@Autowired` constructor and audit integration for `SHARE_GRANT`, `SHARE_UPDATE`, `SHARE_REVOKE`, plus self-grant and disabled grantee denials)
+- `src/main/java/com/trustvault/service/UserService.java` (Updated: Added `@Autowired` constructor and audit integration for `USER_DEACTIVATE`, `USER_REACTIVATE`, `PASSWORD_CHANGE`)
+- `src/main/java/com/trustvault/service/DocumentAuthorizationService.java` (Updated: Added `@Autowired` constructor and fail-safe `auditSecurityDenial` boundary integration)
+- `src/test/java/com/trustvault/service/BusinessAuditIntegrationTest.java` (Created: 14 end-to-end integration tests for business audit logging, rollback atomicity, share distinctions, user lifecycle, read validation, collection isolation, and security denials)
+- `PROMPTS.md` (Updated: Session 11 implementation log)
+
+### Build & Verification Results
+- Command: `.\mvnw.cmd test`
+- Tests Executed: 89 total across 8 test classes:
+  - `HealthControllerTest`: 2 tests passed.
+  - `DocumentPersistenceTest`: 9 tests passed.
+  - `DocumentAuthorizationTest`: 25 tests passed.
+  - `AuditEventPersistenceTest`: 9 tests passed.
+  - `AuditServiceTest`: 8 tests passed.
+  - `BusinessAuditIntegrationTest`: 14 tests passed.
+  - `AuthenticationIntegrationTest`: 21 tests passed.
+  - `TrustVaultApplicationTests`: 1 test passed.
+- Failures: 0, Errors: 0, Skipped: 0.
+- Build Status: `BUILD SUCCESS` (34.323 s).
+
+### Unresolved Issues & Technical Limitations
+- **HikariCP Connection Pool Pinning in `REQUIRES_NEW`**: During denial logging within an active transaction, the outer transaction retains its pinned connection while the inner `recordSecurityDenial()` acquires a second connection. In high-concurrency environments or under denial-of-service attempts, this can exhaust small connection pools. While our defensive try-catch at the authorization boundary prevents denial logging failures from breaking security decisions, an asynchronous outbox or decoupled event bus should be considered if traffic scales significantly.
+- **Audit History API Not Yet Implemented**: Audit records are stored append-only in the database and accessible via `AuditService` query methods, but no REST API or administrative UI is exposed in this milestone (by design).
+- **No Files Committed or Pushed**: All changes remain local in the working tree.
+

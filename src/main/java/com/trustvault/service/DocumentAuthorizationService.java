@@ -10,12 +10,14 @@ import com.trustvault.repository.DocumentShareRepository;
 import com.trustvault.repository.UserRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.Objects;
 import java.util.Optional;
+import java.util.UUID;
 
 /**
  * Central authorization service for document ownership and share permissions.
@@ -40,14 +42,25 @@ public class DocumentAuthorizationService {
     private final DocumentRepository documentRepository;
     private final DocumentShareRepository documentShareRepository;
     private final UserRepository userRepository;
+    private final AuditService auditService;
 
     public DocumentAuthorizationService(
             DocumentRepository documentRepository,
             DocumentShareRepository documentShareRepository,
             UserRepository userRepository) {
+        this(documentRepository, documentShareRepository, userRepository, null);
+    }
+
+    @Autowired
+    public DocumentAuthorizationService(
+            DocumentRepository documentRepository,
+            DocumentShareRepository documentShareRepository,
+            UserRepository userRepository,
+            AuditService auditService) {
         this.documentRepository = documentRepository;
         this.documentShareRepository = documentShareRepository;
         this.userRepository = userRepository;
+        this.auditService = auditService;
     }
 
     /**
@@ -171,7 +184,10 @@ public class DocumentAuthorizationService {
     public Document getAuthorizedDocument(Long documentId, String username, SharePermission requiredPermission) {
         Objects.requireNonNull(documentId, "Document ID must not be null");
         Document document = documentRepository.findById(documentId)
-                .orElseThrow(() -> new ResourceNotFoundException("Document not found: " + documentId));
+                .orElseThrow(() -> {
+                    auditSecurityDenial(username, documentId, null, null, null, "reason=NOT_FOUND");
+                    return new ResourceNotFoundException("Document not found: " + documentId);
+                });
         return authorizeDocument(document, username, requiredPermission);
     }
 
@@ -189,7 +205,10 @@ public class DocumentAuthorizationService {
     public Document getAuthorizedDocumentForUpdate(Long documentId, String username, SharePermission requiredPermission) {
         Objects.requireNonNull(documentId, "Document ID must not be null");
         Document document = documentRepository.findByIdForUpdate(documentId)
-                .orElseThrow(() -> new ResourceNotFoundException("Document not found: " + documentId));
+                .orElseThrow(() -> {
+                    auditSecurityDenial(username, documentId, null, null, null, "reason=NOT_FOUND");
+                    return new ResourceNotFoundException("Document not found: " + documentId);
+                });
         return authorizeDocument(document, username, requiredPermission);
     }
 
@@ -209,16 +228,21 @@ public class DocumentAuthorizationService {
 
         // 1. Verify caller user exists and is active (enabled)
         User requestingUser = userRepository.findByUsername(normalizedUsername)
-                .orElseThrow(() -> new ResourceNotFoundException("Document not found: " + document.getId()));
+                .orElseThrow(() -> {
+                    auditSecurityDenial(normalizedUsername, document.getId(), document.getStorageKey(), null, null, "reason=USER_NOT_FOUND");
+                    return new ResourceNotFoundException("Document not found: " + document.getId());
+                });
 
         if (!requestingUser.isEnabled()) {
             log.warn("Access rejected: account '{}' is disabled", normalizedUsername);
+            auditSecurityDenial(normalizedUsername, document.getId(), document.getStorageKey(), null, null, "reason=ACCOUNT_DISABLED");
             throw new ResourceNotFoundException("Document not found: " + document.getId());
         }
 
         // 2. Policy: when a document owner is disabled, their documents are unavailable to grantees
         if (!document.getOwner().isEnabled()) {
             log.warn("Access rejected (404): owner of document '{}' is disabled", document.getId());
+            auditSecurityDenial(normalizedUsername, document.getId(), document.getStorageKey(), null, null, "reason=OWNER_ACCOUNT_DISABLED");
             throw new ResourceNotFoundException("Document not found: " + document.getId());
         }
 
@@ -233,6 +257,7 @@ public class DocumentAuthorizationService {
         if (shareOpt.isEmpty()) {
             // Unshared user: Return 404 to avoid leaking document existence to unauthorized callers (anti-IDOR)
             log.warn("Authorization rejected (404): user '{}' has no grant for document '{}'", normalizedUsername, document.getId());
+            auditSecurityDenial(normalizedUsername, document.getId(), document.getStorageKey(), null, null, "reason=NOT_FOUND_OR_UNAUTHORIZED");
             throw new ResourceNotFoundException("Document not found: " + document.getId());
         }
 
@@ -250,9 +275,11 @@ public class DocumentAuthorizationService {
             }
             // Grantee has READ but attempted EDIT: Return 403 because they already know document exists
             log.warn("Authorization denied (403): user '{}' has READ permission but requested EDIT on document '{}'", normalizedUsername, document.getId());
+            auditSecurityDenial(normalizedUsername, document.getId(), document.getStorageKey(), null, null, "reason=INSUFFICIENT_PERMISSION");
             throw new AccessDeniedException("Insufficient permission to modify document: " + document.getId());
         }
 
+        auditSecurityDenial(normalizedUsername, document.getId(), document.getStorageKey(), null, null, "reason=INSUFFICIENT_PERMISSION");
         throw new AccessDeniedException("Insufficient permission for requested document operation");
     }
 
@@ -268,7 +295,10 @@ public class DocumentAuthorizationService {
     public Document getAuthorizedDocumentForOwner(Long documentId, String username) {
         Objects.requireNonNull(documentId, "Document ID must not be null");
         Document document = documentRepository.findById(documentId)
-                .orElseThrow(() -> new ResourceNotFoundException("Document not found: " + documentId));
+                .orElseThrow(() -> {
+                    auditSecurityDenial(username, documentId, null, null, null, "reason=NOT_FOUND");
+                    return new ResourceNotFoundException("Document not found: " + documentId);
+                });
         return authorizeDocumentForOwner(document, username);
     }
 
@@ -286,7 +316,10 @@ public class DocumentAuthorizationService {
     public Document getAuthorizedDocumentForOwnerForUpdate(Long documentId, String username) {
         Objects.requireNonNull(documentId, "Document ID must not be null");
         Document document = documentRepository.findByIdForUpdate(documentId)
-                .orElseThrow(() -> new ResourceNotFoundException("Document not found: " + documentId));
+                .orElseThrow(() -> {
+                    auditSecurityDenial(username, documentId, null, null, null, "reason=NOT_FOUND");
+                    return new ResourceNotFoundException("Document not found: " + documentId);
+                });
         return authorizeDocumentForOwner(document, username);
     }
 
@@ -304,15 +337,20 @@ public class DocumentAuthorizationService {
         String normalizedUsername = username.trim();
 
         User requestingUser = userRepository.findByUsername(normalizedUsername)
-                .orElseThrow(() -> new ResourceNotFoundException("Document not found: " + document.getId()));
+                .orElseThrow(() -> {
+                    auditSecurityDenial(normalizedUsername, document.getId(), document.getStorageKey(), null, null, "reason=USER_NOT_FOUND");
+                    return new ResourceNotFoundException("Document not found: " + document.getId());
+                });
 
         if (!requestingUser.isEnabled()) {
             log.warn("Owner operation rejected: account '{}' is disabled", normalizedUsername);
+            auditSecurityDenial(normalizedUsername, document.getId(), document.getStorageKey(), null, null, "reason=ACCOUNT_DISABLED");
             throw new ResourceNotFoundException("Document not found: " + document.getId());
         }
 
         if (!document.getOwner().isEnabled()) {
             log.warn("Owner operation rejected: document owner is disabled for document '{}'", document.getId());
+            auditSecurityDenial(normalizedUsername, document.getId(), document.getStorageKey(), null, null, "reason=OWNER_ACCOUNT_DISABLED");
             throw new ResourceNotFoundException("Document not found: " + document.getId());
         }
 
@@ -327,11 +365,41 @@ public class DocumentAuthorizationService {
         if (hasShareGrant) {
             // Known grantee attempting owner-only action (delete, grant, revoke, list shares) -> 403 Forbidden
             log.warn("Access denied (403): grantee '{}' attempted owner-only operation on document '{}'", normalizedUsername, document.getId());
+            auditSecurityDenial(normalizedUsername, document.getId(), document.getStorageKey(), null, null, "reason=OWNER_ONLY_OPERATION");
             throw new AccessDeniedException("Only the document owner can perform this operation on document: " + document.getId());
         } else {
             // Unshared user attempting access -> 404 Not Found (anti-enumeration)
             log.warn("Authorization rejected (404): user '{}' has no grant on document '{}'", normalizedUsername, document.getId());
+            auditSecurityDenial(normalizedUsername, document.getId(), document.getStorageKey(), null, null, "reason=NOT_FOUND_OR_UNAUTHORIZED");
             throw new ResourceNotFoundException("Document not found: " + document.getId());
+        }
+    }
+
+    /**
+     * Safely audits a security denial through the injected AuditService Spring proxy.
+     *
+     * <p>Connection-Pool Limitation:
+     * {@code recordSecurityDenial()} runs with {@code Propagation.REQUIRES_NEW}, which suspends
+     * the active transaction while keeping its database connection pinned to the current thread.
+     * If HikariCP has insufficient connections under high concurrency, connection acquisition may
+     * fail or block. To guarantee that audit failures NEVER mask, alter, or replace the primary
+     * authorization decision, all exceptions are caught defensively here at the boundary.
+     */
+    private void auditSecurityDenial(
+            String username,
+            Long documentId,
+            UUID documentStorageKey,
+            String targetUsername,
+            String clientIp,
+            String reason) {
+        if (auditService == null) {
+            return;
+        }
+        try {
+            auditService.recordSecurityDenial(username, documentId, documentStorageKey, targetUsername, clientIp, reason);
+        } catch (Exception ex) {
+            log.error("Failed to audit security denial for user '{}' on document {}: {}",
+                    username, documentId, ex.getMessage());
         }
     }
 }

@@ -1,10 +1,12 @@
 package com.trustvault.service;
 
+import com.trustvault.audit.AuditAction;
 import com.trustvault.entity.Role;
 import com.trustvault.entity.User;
 import com.trustvault.repository.UserRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.security.core.session.SessionInformation;
 import org.springframework.security.core.session.SessionRegistry;
@@ -32,6 +34,7 @@ import java.util.Optional;
  * - Routine logs NEVER expose raw SQL exceptions, database column names, or internal stack traces.
  * - Active sessions are deliberately revoked upon password changes via the SessionRegistry.
  * - Strictly internal service; does NOT expose an unauthenticated public registration endpoint.
+ * - Emits structured audit events on password change, deactivation, and reactivation within the same transaction.
  */
 @Service
 @Transactional
@@ -42,11 +45,18 @@ public class UserService {
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
     private final SessionRegistry sessionRegistry;
+    private final AuditService auditService;
 
     public UserService(UserRepository userRepository, PasswordEncoder passwordEncoder, SessionRegistry sessionRegistry) {
+        this(userRepository, passwordEncoder, sessionRegistry, null);
+    }
+
+    @Autowired
+    public UserService(UserRepository userRepository, PasswordEncoder passwordEncoder, SessionRegistry sessionRegistry, AuditService auditService) {
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
         this.sessionRegistry = sessionRegistry;
+        this.auditService = auditService;
     }
 
     /**
@@ -157,6 +167,18 @@ public class UserService {
         user.setPassword(hashedNewPassword);
         userRepository.save(user);
 
+        if (auditService != null) {
+            auditService.recordSuccess(
+                    AuditAction.PASSWORD_CHANGE,
+                    user.getUsername(),
+                    null,
+                    null,
+                    null,
+                    null,
+                    null
+            );
+        }
+
         // Security Policy: Invalidate all active sessions for this user ONLY after the password update transaction successfully commits
         scheduleSessionRevocationAfterCommit(user.getUsername());
 
@@ -183,6 +205,18 @@ public class UserService {
         user.setEnabled(false);
         userRepository.save(user);
 
+        if (auditService != null) {
+            auditService.recordSuccess(
+                    AuditAction.USER_DEACTIVATE,
+                    trimmedUsername,
+                    null,
+                    null,
+                    user.getUsername(),
+                    null,
+                    null
+            );
+        }
+
         // Security Policy: Invalidate all active sessions for this user ONLY after the deactivation transaction commits
         scheduleSessionRevocationAfterCommit(user.getUsername());
 
@@ -208,6 +242,19 @@ public class UserService {
 
         user.setEnabled(true);
         userRepository.save(user);
+
+        if (auditService != null) {
+            auditService.recordSuccess(
+                    AuditAction.USER_REACTIVATE,
+                    trimmedUsername,
+                    null,
+                    null,
+                    user.getUsername(),
+                    null,
+                    null
+            );
+        }
+
         log.info("User account '{}' successfully reactivated", user.getUsername());
     }
 

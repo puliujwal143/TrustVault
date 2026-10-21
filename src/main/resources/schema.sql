@@ -52,3 +52,30 @@ CREATE TABLE IF NOT EXISTS document_shares (
 
 CREATE INDEX IF NOT EXISTS idx_document_shares_grantee_id ON document_shares(grantee_id);
 CREATE INDEX IF NOT EXISTS idx_document_shares_document_id ON document_shares(document_id);
+
+-- ------------------------------------------------------------------------------
+-- 4. Audit Events Table (Append-Only, Tamper-Resistant)
+-- ------------------------------------------------------------------------------
+-- Note: document_id is stored as an unconstrained logical reference without a foreign
+-- key cascade to ensure that document deletion never alters or purges historical audit records.
+-- document_storage_key preserves the immutable UUID of the referenced document.
+CREATE TABLE IF NOT EXISTS audit_events (
+    id BIGSERIAL PRIMARY KEY,
+    event_id UUID NOT NULL UNIQUE,
+    timestamp TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    actor_username VARCHAR(50) NOT NULL,
+    action VARCHAR(50) NOT NULL,
+    document_id BIGINT,
+    document_storage_key UUID,
+    target_username VARCHAR(50),
+    outcome VARCHAR(20) NOT NULL,
+    client_ip VARCHAR(45),
+    details VARCHAR(500)
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_events_timestamp ON audit_events(timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_events_actor ON audit_events(actor_username);
+CREATE INDEX IF NOT EXISTS idx_audit_events_action ON audit_events(action);
+CREATE INDEX IF NOT EXISTS idx_audit_events_doc_id ON audit_events(document_id);
+CREATE INDEX IF NOT EXISTS idx_audit_events_storage_key ON audit_events(document_storage_key);
+CREATE INDEX IF NOT EXISTS idx_audit_events_outcome ON audit_events(outcome);

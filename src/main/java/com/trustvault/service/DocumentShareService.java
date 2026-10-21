@@ -1,5 +1,6 @@
 package com.trustvault.service;
 
+import com.trustvault.audit.AuditAction;
 import com.trustvault.entity.Document;
 import com.trustvault.entity.DocumentShare;
 import com.trustvault.entity.SharePermission;
@@ -9,6 +10,7 @@ import com.trustvault.repository.DocumentShareRepository;
 import com.trustvault.repository.UserRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -29,6 +31,7 @@ import java.util.Optional;
  *    database unique constraint on (document_id, grantee_id) and preventing duplicate rows.
  * 6. Revoking a grant immediately stops authorizing subsequent requests.
  * 7. Pessimistic write locking on Document coordinates concurrent share grants and in-flight edits.
+ * 8. Emits structured audit events on share creation, update, and revocation within the same transaction.
  */
 @Service
 @Transactional
@@ -39,14 +42,25 @@ public class DocumentShareService {
     private final DocumentShareRepository documentShareRepository;
     private final UserRepository userRepository;
     private final DocumentAuthorizationService authorizationService;
+    private final AuditService auditService;
 
     public DocumentShareService(
             DocumentShareRepository documentShareRepository,
             UserRepository userRepository,
             DocumentAuthorizationService authorizationService) {
+        this(documentShareRepository, userRepository, authorizationService, null);
+    }
+
+    @Autowired
+    public DocumentShareService(
+            DocumentShareRepository documentShareRepository,
+            UserRepository userRepository,
+            DocumentAuthorizationService authorizationService,
+            AuditService auditService) {
         this.documentShareRepository = documentShareRepository;
         this.userRepository = userRepository;
         this.authorizationService = authorizationService;
+        this.auditService = auditService;
     }
 
     /**
@@ -75,6 +89,13 @@ public class DocumentShareService {
 
         // 2. Reject self-granting
         if (normalizedGrantee.equalsIgnoreCase(normalizedOwner)) {
+            if (auditService != null) {
+                try {
+                    auditService.recordSecurityDenial(normalizedOwner, document.getId(), document.getStorageKey(), normalizedOwner, null, "reason=SELF_GRANT_REJECTED");
+                } catch (Exception ex) {
+                    log.error("Failed to audit self-grant denial: {}", ex.getMessage());
+                }
+            }
             throw new IllegalArgumentException("Document owners cannot grant access to themselves");
         }
 
@@ -83,14 +104,22 @@ public class DocumentShareService {
                 .orElseThrow(() -> new IllegalArgumentException("Grantee user not found: " + normalizedGrantee));
 
         if (!grantee.isEnabled()) {
+            if (auditService != null) {
+                try {
+                    auditService.recordSecurityDenial(normalizedOwner, document.getId(), document.getStorageKey(), normalizedGrantee, null, "reason=DISABLED_GRANTEE_REJECTED");
+                } catch (Exception ex) {
+                    log.error("Failed to audit disabled grantee denial: {}", ex.getMessage());
+                }
+            }
             throw new IllegalArgumentException("Cannot grant access to disabled user: " + normalizedGrantee);
         }
 
         // 4. Upsert grant: update permission if share exists, otherwise create new record
         Optional<DocumentShare> existingShareOpt = documentShareRepository.findByDocumentIdAndGranteeUsername(documentId, grantee.getUsername());
+        boolean isUpdate = existingShareOpt.isPresent();
 
         DocumentShare shareToSave;
-        if (existingShareOpt.isPresent()) {
+        if (isUpdate) {
             shareToSave = existingShareOpt.get();
             shareToSave.setPermission(permission);
             log.info("Updated existing share grant for user '{}' on document '{}' to '{}'", normalizedGrantee, documentId, permission);
@@ -99,7 +128,21 @@ public class DocumentShareService {
             log.info("Created new share grant for user '{}' on document '{}' with permission '{}'", normalizedGrantee, documentId, permission);
         }
 
-        return documentShareRepository.save(shareToSave);
+        DocumentShare savedShare = documentShareRepository.save(shareToSave);
+
+        if (auditService != null) {
+            auditService.recordSuccess(
+                    isUpdate ? AuditAction.SHARE_UPDATE : AuditAction.SHARE_GRANT,
+                    normalizedOwner,
+                    document.getId(),
+                    document.getStorageKey(),
+                    grantee.getUsername(),
+                    null,
+                    "permission=" + permission.name()
+            );
+        }
+
+        return savedShare;
     }
 
     /**
@@ -116,7 +159,7 @@ public class DocumentShareService {
         Objects.requireNonNull(ownerUsername, "Owner username must not be null");
 
         // 1. Lock document row and verify caller is document owner strictly under the acquired lock
-        authorizationService.getAuthorizedDocumentForOwnerForUpdate(documentId, ownerUsername);
+        Document document = authorizationService.getAuthorizedDocumentForOwnerForUpdate(documentId, ownerUsername);
 
         String normalizedGrantee = granteeUsername.trim();
 
@@ -127,6 +170,18 @@ public class DocumentShareService {
         // 3. Delete share record immediately
         documentShareRepository.delete(share);
         log.info("Revoked share grant for user '{}' on document '{}' by owner '{}'", normalizedGrantee, documentId, ownerUsername);
+
+        if (auditService != null) {
+            auditService.recordSuccess(
+                    AuditAction.SHARE_REVOKE,
+                    ownerUsername.trim(),
+                    document.getId(),
+                    document.getStorageKey(),
+                    normalizedGrantee,
+                    null,
+                    null
+            );
+        }
     }
 
     /**

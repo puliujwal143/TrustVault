@@ -281,6 +281,8 @@ class DocumentPersistenceTest {
         Instant uploadTime = Instant.now();
         String validChecksum = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 
+        UUID fileStorageKey = UUID.randomUUID();
+        doc.setFileStorageKey(fileStorageKey);
         doc.setFileOriginalName("financial_report_q3.pdf");
         doc.setFileContentType("application/pdf");
         doc.setFileSize(2048576L);
@@ -296,6 +298,7 @@ class DocumentPersistenceTest {
         assertThat(fetched).isPresent();
         Document retrieved = fetched.get();
 
+        assertThat(retrieved.getFileStorageKey()).isEqualTo(fileStorageKey);
         assertThat(retrieved.getFileOriginalName()).isEqualTo("financial_report_q3.pdf");
         assertThat(retrieved.getFileContentType()).isEqualTo("application/pdf");
         assertThat(retrieved.getFileSize()).isEqualTo(2048576L);
@@ -317,6 +320,7 @@ class DocumentPersistenceTest {
         assertThat(fetched).isPresent();
         Document retrieved = fetched.get();
 
+        assertThat(retrieved.getFileStorageKey()).isNull();
         assertThat(retrieved.getFileOriginalName()).isNull();
         assertThat(retrieved.getFileContentType()).isNull();
         assertThat(retrieved.getFileSize()).isNull();
@@ -333,7 +337,8 @@ class DocumentPersistenceTest {
         Document doc = new Document("Empty File Document", "Contains zero-byte payload", owner);
 
         String zeroByteSha256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
-        doc.setFileMetadata("empty.txt", "text/plain", 0L, zeroByteSha256, Instant.now());
+        UUID fileKey = UUID.randomUUID();
+        doc.setFileMetadata(fileKey, "empty.txt", "text/plain", 0L, zeroByteSha256, Instant.now());
 
         // A zero-byte file is valid and hasFile() must return true
         assertThat(doc.hasFile()).isTrue();
@@ -344,6 +349,7 @@ class DocumentPersistenceTest {
         assertThat(fetched).isPresent();
         assertThat(fetched.get().hasFile()).isTrue();
         assertThat(fetched.get().getFileSize()).isEqualTo(0L);
+        assertThat(fetched.get().getFileStorageKey()).isEqualTo(fileKey);
         assertThat(fetched.get().getFileOriginalName()).isEqualTo("empty.txt");
     }
 
@@ -360,7 +366,9 @@ class DocumentPersistenceTest {
         assertThat(doc.hasFile()).isFalse();
 
         // 1. Attach file metadata
+        UUID fileKey1 = UUID.randomUUID();
         doc.setFileMetadata(
+                fileKey1,
                 "contract_v1.docx",
                 "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                 102400L,
@@ -373,10 +381,13 @@ class DocumentPersistenceTest {
         assertThat(savedV1.getStorageKey()).isEqualTo(originalStorageKey);
         assertThat(savedV1.getOwner().getId()).isEqualTo(originalOwnerId);
         assertThat(savedV1.hasFile()).isTrue();
+        assertThat(savedV1.getFileStorageKey()).isEqualTo(fileKey1);
         assertThat(savedV1.getFileOriginalName()).isEqualTo("contract_v1.docx");
 
         // 2. Update/replace file metadata
+        UUID fileKey2 = UUID.randomUUID();
         savedV1.setFileMetadata(
+                fileKey2,
                 "contract_v2.docx",
                 "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                 204800L,
@@ -389,6 +400,8 @@ class DocumentPersistenceTest {
         assertThat(savedV2.getStorageKey()).isEqualTo(originalStorageKey);
         assertThat(savedV2.getOwner().getId()).isEqualTo(originalOwnerId);
         assertThat(savedV2.hasFile()).isTrue();
+        assertThat(savedV2.getFileStorageKey()).isEqualTo(fileKey2);
+        assertThat(savedV2.getFileStorageKey()).isNotEqualTo(fileKey1);
         assertThat(savedV2.getFileOriginalName()).isEqualTo("contract_v2.docx");
         assertThat(savedV2.getFileSize()).isEqualTo(204800L);
         assertThat(savedV2.getFileChecksum()).isEqualTo("fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210");
@@ -438,7 +451,7 @@ class DocumentPersistenceTest {
         assertThat(doc.isFileMetadataConsistent()).isFalse();
 
         // Fully populated -> consistent
-        doc.setFileMetadata("full.txt", "text/plain", 10L, "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", Instant.now());
+        doc.setFileMetadata(UUID.randomUUID(), "full.txt", "text/plain", 10L, "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", Instant.now());
         assertThat(doc.isFileMetadataConsistent()).isTrue();
 
         // Cleared -> consistent
@@ -448,48 +461,56 @@ class DocumentPersistenceTest {
     }
 
     @Test
-    @DisplayName("File metadata: incomplete metadata (missing any of the 5 fields) must return hasFile() false and isFileMetadataConsistent() false")
+    @DisplayName("File metadata: incomplete metadata (missing any of the 6 fields) must return hasFile() false and isFileMetadataConsistent() false")
     void document_fileMetadata_incompleteMetadata_shouldReturnHasFileFalse() {
         User owner = persistUser("file_user_8", "fileuser8@example.com");
         Document doc = new Document("Incomplete Doc", "Testing incomplete states", owner);
 
         String checksum = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
         Instant now = Instant.now();
+        UUID fileKey = UUID.randomUUID();
 
-        // 4 of 5 fields: missing fileUploadedAt
+        // 5 of 6 fields: missing fileStorageKey
+        doc.setFileStorageKey(null);
         doc.setFileOriginalName("file.pdf");
         doc.setFileContentType("application/pdf");
         doc.setFileSize(100L);
         doc.setFileChecksum(checksum);
+        doc.setFileUploadedAt(now);
+        assertThat(doc.hasFile()).isFalse();
+        assertThat(doc.isFileMetadataConsistent()).isFalse();
+
+        // 5 of 6 fields: missing fileUploadedAt
+        doc.setFileStorageKey(fileKey);
         doc.setFileUploadedAt(null);
         assertThat(doc.hasFile()).isFalse();
         assertThat(doc.isFileMetadataConsistent()).isFalse();
 
-        // 4 of 5 fields: missing fileContentType
+        // 5 of 6 fields: missing fileContentType
         doc.setFileUploadedAt(now);
         doc.setFileContentType(null);
         assertThat(doc.hasFile()).isFalse();
         assertThat(doc.isFileMetadataConsistent()).isFalse();
 
-        // 4 of 5 fields: missing fileOriginalName
+        // 5 of 6 fields: missing fileOriginalName
         doc.setFileContentType("application/pdf");
         doc.setFileOriginalName(null);
         assertThat(doc.hasFile()).isFalse();
         assertThat(doc.isFileMetadataConsistent()).isFalse();
 
-        // 4 of 5 fields: missing fileChecksum
+        // 5 of 6 fields: missing fileChecksum
         doc.setFileOriginalName("file.pdf");
         doc.setFileChecksum(null);
         assertThat(doc.hasFile()).isFalse();
         assertThat(doc.isFileMetadataConsistent()).isFalse();
 
-        // 4 of 5 fields: missing fileSize
+        // 5 of 6 fields: missing fileSize
         doc.setFileChecksum(checksum);
         doc.setFileSize(null);
         assertThat(doc.hasFile()).isFalse();
         assertThat(doc.isFileMetadataConsistent()).isFalse();
 
-        // All 5 fields present -> hasFile() is true and consistent
+        // All 6 fields present -> hasFile() is true and consistent
         doc.setFileSize(100L);
         assertThat(doc.hasFile()).isTrue();
         assertThat(doc.isFileMetadataConsistent()).isTrue();
@@ -503,63 +524,184 @@ class DocumentPersistenceTest {
 
         String validChecksum = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
         Instant now = Instant.now();
+        UUID validFileKey = UUID.randomUUID();
+
+        // 0. Null file storage key
+        assertThatThrownBy(() -> doc.setFileMetadata(null, "report.txt", "text/plain", 100L, validChecksum, now))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("File storage key must not be null");
+        assertThat(doc.hasFile()).isFalse();
 
         // 1. Null or blank filename
-        assertThatThrownBy(() -> doc.setFileMetadata(null, "text/plain", 100L, validChecksum, now))
+        assertThatThrownBy(() -> doc.setFileMetadata(validFileKey, null, "text/plain", 100L, validChecksum, now))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("Original filename must not be null or blank");
-        assertThatThrownBy(() -> doc.setFileMetadata("   ", "text/plain", 100L, validChecksum, now))
+        assertThatThrownBy(() -> doc.setFileMetadata(validFileKey, "   ", "text/plain", 100L, validChecksum, now))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("Original filename must not be null or blank");
         assertThat(doc.hasFile()).isFalse();
 
         // 2. Null or blank content type
-        assertThatThrownBy(() -> doc.setFileMetadata("report.txt", null, 100L, validChecksum, now))
+        assertThatThrownBy(() -> doc.setFileMetadata(validFileKey, "report.txt", null, 100L, validChecksum, now))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("Content type must not be null or blank");
-        assertThatThrownBy(() -> doc.setFileMetadata("report.txt", "  ", 100L, validChecksum, now))
+        assertThatThrownBy(() -> doc.setFileMetadata(validFileKey, "report.txt", "  ", 100L, validChecksum, now))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("Content type must not be null or blank");
         assertThat(doc.hasFile()).isFalse();
 
         // 3. Null or negative size
-        assertThatThrownBy(() -> doc.setFileMetadata("report.txt", "text/plain", null, validChecksum, now))
+        assertThatThrownBy(() -> doc.setFileMetadata(validFileKey, "report.txt", "text/plain", null, validChecksum, now))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("File size must not be null and must be non-negative");
-        assertThatThrownBy(() -> doc.setFileMetadata("report.txt", "text/plain", -1L, validChecksum, now))
+        assertThatThrownBy(() -> doc.setFileMetadata(validFileKey, "report.txt", "text/plain", -1L, validChecksum, now))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("File size must not be null and must be non-negative");
         assertThat(doc.hasFile()).isFalse();
 
         // 4. Null or invalid checksum
-        assertThatThrownBy(() -> doc.setFileMetadata("report.txt", "text/plain", 100L, null, now))
+        assertThatThrownBy(() -> doc.setFileMetadata(validFileKey, "report.txt", "text/plain", 100L, null, now))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("File checksum must not be null");
-        assertThatThrownBy(() -> doc.setFileMetadata("report.txt", "text/plain", 100L, "short-checksum", now))
+        assertThatThrownBy(() -> doc.setFileMetadata(validFileKey, "report.txt", "text/plain", 100L, "short-checksum", now))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("File checksum must be a 64-character hexadecimal SHA-256 hash");
-        assertThatThrownBy(() -> doc.setFileMetadata("report.txt", "text/plain", 100L, validChecksum + "extra", now))
+        assertThatThrownBy(() -> doc.setFileMetadata(validFileKey, "report.txt", "text/plain", 100L, validChecksum + "extra", now))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("File checksum must be a 64-character hexadecimal SHA-256 hash");
         assertThat(doc.hasFile()).isFalse();
 
         // 5. Successful setFileMetadata with trimming and checksum normalization
         String upperChecksum = "E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855";
-        doc.setFileMetadata("  document.pdf  ", "  application/pdf  ", 500L, upperChecksum, now);
+        doc.setFileMetadata(validFileKey, "  document.pdf  ", "  application/pdf  ", 500L, upperChecksum, now);
 
         assertThat(doc.hasFile()).isTrue();
+        assertThat(doc.getFileStorageKey()).isEqualTo(validFileKey);
         assertThat(doc.getFileOriginalName()).isEqualTo("document.pdf");
         assertThat(doc.getFileContentType()).isEqualTo("application/pdf");
         assertThat(doc.getFileSize()).isEqualTo(500L);
         assertThat(doc.getFileChecksum()).isEqualTo("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"); // Lowercased!
 
         // 6. Failed update does NOT mutate previously valid state
-        assertThatThrownBy(() -> doc.setFileMetadata("new.pdf", "application/pdf", -5L, validChecksum, now))
+        assertThatThrownBy(() -> doc.setFileMetadata(validFileKey, "new.pdf", "application/pdf", -5L, validChecksum, now))
                 .isInstanceOf(IllegalArgumentException.class);
 
         // Verify entity retained its previous valid metadata
         assertThat(doc.hasFile()).isTrue();
+        assertThat(doc.getFileStorageKey()).isEqualTo(validFileKey);
         assertThat(doc.getFileOriginalName()).isEqualTo("document.pdf");
         assertThat(doc.getFileSize()).isEqualTo(500L);
+    }
+
+    @Test
+    @DisplayName("File storage key: persistence and reload via findById and findByFileStorageKey")
+    void document_fileStorageKey_persistedAndReloadedByRepository() {
+        User owner = persistUser("file_user_10", "fileuser10@example.com");
+        Document doc = new Document("Blob Key Test Doc", "Testing fileStorageKey persistence", owner);
+
+        UUID fileKey = UUID.randomUUID();
+        String validChecksum = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+        Instant now = Instant.now();
+
+        doc.setFileMetadata(fileKey, "document.pdf", "application/pdf", 1024L, validChecksum, now);
+        Document saved = documentRepository.saveAndFlush(doc);
+
+        // 1. Reload by primary key
+        Document reloadedById = documentRepository.findById(saved.getId()).orElseThrow();
+        assertThat(reloadedById.getFileStorageKey()).isEqualTo(fileKey);
+        assertThat(reloadedById.hasFile()).isTrue();
+
+        // 2. Reload by fileStorageKey query method
+        Document reloadedByFileKey = documentRepository.findByFileStorageKey(fileKey).orElseThrow();
+        assertThat(reloadedByFileKey.getId()).isEqualTo(saved.getId());
+        assertThat(reloadedByFileKey.getStorageKey()).isEqualTo(saved.getStorageKey());
+        assertThat(reloadedByFileKey.getFileOriginalName()).isEqualTo("document.pdf");
+    }
+
+    @Test
+    @DisplayName("File storage key: clearing file metadata clears fileStorageKey and reverts to metadata-only")
+    void document_fileStorageKey_clearingFileMetadataClearsStorageKey() {
+        User owner = persistUser("file_user_11", "fileuser11@example.com");
+        Document doc = new Document("Clear Storage Key Doc", "Testing clearFileMetadata with storage key", owner);
+
+        UUID fileKey = UUID.randomUUID();
+        String validChecksum = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+        doc.setFileMetadata(fileKey, "data.csv", "text/csv", 2048L, validChecksum, Instant.now());
+
+        Document savedWithFile = documentRepository.saveAndFlush(doc);
+        assertThat(savedWithFile.getFileStorageKey()).isEqualTo(fileKey);
+        assertThat(savedWithFile.hasFile()).isTrue();
+
+        savedWithFile.clearFileMetadata();
+        assertThat(savedWithFile.getFileStorageKey()).isNull();
+        assertThat(savedWithFile.hasFile()).isFalse();
+        assertThat(savedWithFile.isFileMetadataConsistent()).isTrue();
+
+        Document clearedInDb = documentRepository.saveAndFlush(savedWithFile);
+        Document reloaded = documentRepository.findById(clearedInDb.getId()).orElseThrow();
+        assertThat(reloaded.getFileStorageKey()).isNull();
+        assertThat(reloaded.getFileOriginalName()).isNull();
+        assertThat(reloaded.hasFile()).isFalse();
+        assertThat(reloaded.isFileMetadataConsistent()).isTrue();
+    }
+
+    @Test
+    @DisplayName("File storage key: replacing file updates fileStorageKey while strictly preserving logical storageKey")
+    void document_fileStorageKey_replacingFileChangesFileStorageKeyWhilePreservingLogicalStorageKey() {
+        User owner = persistUser("file_user_12", "fileuser12@example.com");
+        Document doc = new Document("Replacement Key Doc", "Testing key decoupling", owner);
+
+        UUID originalLogicalStorageKey = doc.getStorageKey();
+        UUID fileKey1 = UUID.randomUUID();
+        UUID fileKey2 = UUID.randomUUID();
+        String checksum1 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+        String checksum2 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+        // Initial upload: File V1
+        doc.setFileMetadata(fileKey1, "version1.pdf", "application/pdf", 1000L, checksum1, Instant.now());
+        Document savedV1 = documentRepository.saveAndFlush(doc);
+
+        assertThat(savedV1.getStorageKey()).isEqualTo(originalLogicalStorageKey);
+        assertThat(savedV1.getFileStorageKey()).isEqualTo(fileKey1);
+
+        // Replacement upload: File V2
+        savedV1.setFileMetadata(fileKey2, "version2.pdf", "application/pdf", 2000L, checksum2, Instant.now());
+        Document savedV2 = documentRepository.saveAndFlush(savedV1);
+
+        // Logical storageKey MUST remain completely invariant
+        assertThat(savedV2.getStorageKey()).isEqualTo(originalLogicalStorageKey);
+        // Physical fileStorageKey MUST point to the new blob
+        assertThat(savedV2.getFileStorageKey()).isEqualTo(fileKey2);
+        assertThat(savedV2.getFileStorageKey()).isNotEqualTo(fileKey1);
+    }
+
+    @Test
+    @DisplayName("File storage key: partial state with or without fileStorageKey is flagged as inconsistent")
+    void document_fileStorageKey_missingStorageKeyLeavesMetadataInconsistent() {
+        User owner = persistUser("file_user_13", "fileuser13@example.com");
+        Document doc = new Document("Inconsistency Doc", "Testing partial states", owner);
+
+        String validChecksum = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+        Instant now = Instant.now();
+
+        // 1. Only fileStorageKey set -> inconsistent
+        doc.setFileStorageKey(UUID.randomUUID());
+        assertThat(doc.hasFile()).isFalse();
+        assertThat(doc.isFileMetadataConsistent()).isFalse();
+
+        // 2. All file fields set EXCEPT fileStorageKey -> inconsistent
+        doc.setFileStorageKey(null);
+        doc.setFileOriginalName("report.pdf");
+        doc.setFileContentType("application/pdf");
+        doc.setFileSize(500L);
+        doc.setFileChecksum(validChecksum);
+        doc.setFileUploadedAt(now);
+        assertThat(doc.hasFile()).isFalse();
+        assertThat(doc.isFileMetadataConsistent()).isFalse();
+
+        // 3. Complete with fileStorageKey -> consistent
+        doc.setFileStorageKey(UUID.randomUUID());
+        assertThat(doc.hasFile()).isTrue();
+        assertThat(doc.isFileMetadataConsistent()).isTrue();
     }
 }

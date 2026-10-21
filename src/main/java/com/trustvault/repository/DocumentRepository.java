@@ -54,6 +54,15 @@ public interface DocumentRepository extends JpaRepository<Document, Long> {
     Optional<Document> findByStorageKey(UUID storageKey);
 
     /**
+     * Finds a document by its active physical file storage key UUID, eagerly fetching the owner entity.
+     *
+     * @param fileStorageKey the unique UUID of the file blob in storage
+     * @return an Optional containing the Document if found
+     */
+    @EntityGraph(attributePaths = {"owner"})
+    Optional<Document> findByFileStorageKey(UUID fileStorageKey);
+
+    /**
      * Finds all documents owned by a specific User entity.
      *
      * @param owner the User who owns the documents

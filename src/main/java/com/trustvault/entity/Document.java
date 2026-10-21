@@ -73,8 +73,17 @@ public class Document {
     private Instant updatedAt;
 
     /**
+     * Unique UUID identifying the active binary file blob in private storage ({fileStorageKey}.bin).
+     * Decoupled from the document's logical storageKey to enable atomic file replacements without
+     * overwriting or destroying previously valid blobs prior to database transaction commit.
+     * Null for metadata-only documents.
+     */
+    @Column(name = "file_storage_key")
+    private UUID fileStorageKey;
+
+    /**
      * Original client-supplied filename (e.g., "report.pdf").
-     * Decoupled from private disk storage where files are stored using immutable UUID keys ({storageKey}.bin).
+     * Decoupled from private disk storage where files are stored using immutable UUID keys ({fileStorageKey}.bin).
      * Null for metadata-only documents.
      */
     @Size(max = 255, message = "Original filename must not exceed 255 characters")
@@ -212,6 +221,14 @@ public class Document {
 
     // File Metadata Accessors & Helpers
 
+    public UUID getFileStorageKey() {
+        return fileStorageKey;
+    }
+
+    public void setFileStorageKey(UUID fileStorageKey) {
+        this.fileStorageKey = fileStorageKey;
+    }
+
     public String getFileOriginalName() {
         return fileOriginalName;
     }
@@ -259,9 +276,9 @@ public class Document {
      *
      * <p>Semantics:
      * <ul>
-     *   <li>Returns {@code true} only when all five file metadata fields are present:
-     *       {@code fileOriginalName != null}, {@code fileContentType != null}, {@code fileSize != null},
-     *       {@code fileChecksum != null}, and {@code fileUploadedAt != null}.</li>
+     *   <li>Returns {@code true} only when all six file metadata fields are present:
+     *       {@code fileStorageKey != null}, {@code fileOriginalName != null}, {@code fileContentType != null},
+     *       {@code fileSize != null}, {@code fileChecksum != null}, and {@code fileUploadedAt != null}.</li>
      *   <li>A zero-byte file ({@code fileSize == 0}) is valid and treated as present if all fields are populated.</li>
      *   <li>Returns {@code false} if any file metadata field is null (including metadata-only documents).</li>
      * </ul>
@@ -269,7 +286,8 @@ public class Document {
      * @return true if an associated file payload is fully recorded; false otherwise
      */
     public boolean hasFile() {
-        return this.fileOriginalName != null
+        return this.fileStorageKey != null
+                && this.fileOriginalName != null
                 && this.fileContentType != null
                 && this.fileSize != null
                 && this.fileChecksum != null
@@ -278,13 +296,14 @@ public class Document {
 
     /**
      * Verifies that the file metadata attributes are in a consistent state:
-     * either completely populated (all 5 file metadata fields non-null)
-     * or completely absent (all 5 file metadata fields null).
+     * either completely populated (all 6 file metadata fields non-null)
+     * or completely absent (all 6 file metadata fields null).
      *
      * @return true if metadata is fully populated or fully absent; false if partially populated
      */
     public boolean isFileMetadataConsistent() {
-        boolean allNull = fileOriginalName == null
+        boolean allNull = fileStorageKey == null
+                && fileOriginalName == null
                 && fileContentType == null
                 && fileSize == null
                 && fileChecksum == null
@@ -297,6 +316,7 @@ public class Document {
      *
      * <p>Validation rules:
      * <ul>
+     *   <li>File storage key must not be null.</li>
      *   <li>Original filename must not be null or blank, and must not exceed 255 characters.</li>
      *   <li>Content type must not be null or blank, and must not exceed 100 characters.</li>
      *   <li>File size must not be null and must be non-negative (>= 0).</li>
@@ -306,14 +326,18 @@ public class Document {
      *
      * <p>Entity fields are not mutated until all arguments pass validation.
      *
-     * @param originalName client-supplied filename (max 255 chars)
-     * @param contentType  validated MIME content type (max 100 chars)
-     * @param size         byte length of the file (non-negative)
-     * @param checksum     SHA-256 hexadecimal checksum (64 chars)
-     * @param uploadedAt   timestamp of upload completion (defaults to Instant.now() if null)
+     * @param fileStorageKey unique UUID of the physical storage blob
+     * @param originalName   client-supplied filename (max 255 chars)
+     * @param contentType    validated MIME content type (max 100 chars)
+     * @param size           byte length of the file (non-negative)
+     * @param checksum       SHA-256 hexadecimal checksum (64 chars)
+     * @param uploadedAt     timestamp of upload completion (defaults to Instant.now() if null)
      * @throws IllegalArgumentException if any argument violates validation rules
      */
-    public void setFileMetadata(String originalName, String contentType, Long size, String checksum, Instant uploadedAt) {
+    public void setFileMetadata(UUID fileStorageKey, String originalName, String contentType, Long size, String checksum, Instant uploadedAt) {
+        if (fileStorageKey == null) {
+            throw new IllegalArgumentException("File storage key must not be null");
+        }
         if (originalName == null || originalName.isBlank()) {
             throw new IllegalArgumentException("Original filename must not be null or blank");
         }
@@ -345,6 +369,7 @@ public class Document {
         Instant uploadTimestamp = uploadedAt != null ? uploadedAt : Instant.now();
 
         // Atomically mutate entity fields only after all arguments are validated
+        this.fileStorageKey = fileStorageKey;
         this.fileOriginalName = trimmedName;
         this.fileContentType = trimmedContentType;
         this.fileSize = size;
@@ -356,6 +381,7 @@ public class Document {
      * Clears all file metadata attributes, reverting the document to a metadata-only state.
      */
     public void clearFileMetadata() {
+        this.fileStorageKey = null;
         this.fileOriginalName = null;
         this.fileContentType = null;
         this.fileSize = null;
@@ -388,6 +414,7 @@ public class Document {
         return "Document{" +
                 "id=" + id +
                 ", storageKey=" + storageKey +
+                ", fileStorageKey=" + fileStorageKey +
                 ", title='" + title + '\'' +
                 ", hasFile=" + hasFile() +
                 ", fileSize=" + fileSize +

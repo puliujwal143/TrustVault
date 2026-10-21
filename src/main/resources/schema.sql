@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS documents (
     owner_id BIGINT NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    file_storage_key UUID,
     file_original_name VARCHAR(255),
     file_content_type VARCHAR(100),
     file_size BIGINT,
@@ -39,9 +40,10 @@ CREATE TABLE IF NOT EXISTS documents (
     CONSTRAINT chk_documents_file_size CHECK (file_size IS NULL OR file_size >= 0)
 );
 
--- Idempotent schema evolution for existing PostgreSQL databases initialized before Milestone 2.4 Stage 2:
+-- Idempotent schema evolution for existing PostgreSQL databases initialized before Milestone 2.4:
 -- NOTE: In production with ddl-auto: validate, Spring Boot does NOT execute schema.sql automatically on startup.
 -- These statements must be executed manually by a database administrator against existing PostgreSQL instances.
+ALTER TABLE documents ADD COLUMN IF NOT EXISTS file_storage_key UUID;
 ALTER TABLE documents ADD COLUMN IF NOT EXISTS file_original_name VARCHAR(255);
 ALTER TABLE documents ADD COLUMN IF NOT EXISTS file_content_type VARCHAR(100);
 ALTER TABLE documents ADD COLUMN IF NOT EXISTS file_size BIGINT;
@@ -50,6 +52,7 @@ ALTER TABLE documents ADD COLUMN IF NOT EXISTS file_uploaded_at TIMESTAMP WITH T
 
 CREATE INDEX IF NOT EXISTS idx_documents_owner_id ON documents(owner_id);
 CREATE INDEX IF NOT EXISTS idx_documents_storage_key ON documents(storage_key);
+CREATE INDEX IF NOT EXISTS idx_documents_file_storage_key ON documents(file_storage_key);
 
 -- ------------------------------------------------------------------------------
 -- 3. Document Shares Table

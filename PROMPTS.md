@@ -1082,3 +1082,385 @@ Implementation of TrustVault Milestone 2.4 — Stage 2: Document File Metadata O
 - **Manual Database Evolution Required for Existing PostgreSQL Databases**: Because Spring Boot runs with `ddl-auto: validate` and without an automated migration framework (Flyway/Liquibase), existing PostgreSQL databases must have the ALTER statements executed manually by an administrator prior to starting the application with the new entity mappings.
 - **StorageService Remains Decoupled**: `StorageService` is not yet connected to `DocumentService`, and no upload/download controllers or file streaming endpoints are implemented (planned for Stage 3 and Stage 4).
 - **No Files Committed or Pushed**: All changes remain local in the working tree.
+
+---
+
+## 15. Milestone 2.4 — Stage 3, Step 1: Add the Versioned File Storage Pointer
+
+### Objective & Scope
+Decouple the document's logical entity identifier (`Document.storageKey`) from the physical file blob identifier (`Document.fileStorageKey`). This separation ensures that file replacement workflows can write new blobs under an independent UUID without overwriting or destroying previously valid blobs before the database transaction safely commits.
+
+### Key Implementation Details
+1. **`Document.java` Field & Lifecycle Updates**:
+   - Added nullable field `fileStorageKey` (`UUID`, `@Column(name = "file_storage_key")`) with standard getters and setters.
+   - Updated `hasFile()` to require all six file metadata fields (`fileStorageKey != null`, `fileOriginalName != null`, `fileContentType != null`, `fileSize != null`, `fileChecksum != null`, and `fileUploadedAt != null`).
+   - Updated `isFileMetadataConsistent()` to require all six fields null OR all six fields non-null.
+   - Updated `setFileMetadata(UUID fileStorageKey, String originalName, String contentType, Long size, String checksum, Instant uploadedAt)` to strictly validate `fileStorageKey != null` before mutating entity state.
+   - Preserved backward-compatible 5-argument `setFileMetadata(...)` convenience overload which assigns `UUID.randomUUID()` to `fileStorageKey`.
+   - Updated `clearFileMetadata()` to clear `fileStorageKey` to `null` alongside the other five metadata fields.
+   - Preserved `storageKey` immutability (`@Column(updatable = false)`), constructor initialization, and `equals()`/`hashCode()` contract.
+   - Updated `toString()` to include `fileStorageKey`.
+
+2. **Database Schema & Evolution (`schema.sql`)**:
+   - Added `file_storage_key UUID` column to `CREATE TABLE IF NOT EXISTS documents`.
+   - Added idempotent `ALTER TABLE documents ADD COLUMN IF NOT EXISTS file_storage_key UUID;`.
+   - Added index `CREATE INDEX IF NOT EXISTS idx_documents_file_storage_key ON documents(file_storage_key);`.
+   - Preserved `ddl-auto: validate` compatibility.
+
+3. **Repository Support (`DocumentRepository.java`)**:
+   - Added derived query method `Optional<Document> findByFileStorageKey(UUID fileStorageKey)` with eager owner fetch graph.
+
+4. **Persistence & Integrity Tests (`DocumentPersistenceTest.java`)**:
+   - Updated existing tests to verify `fileStorageKey` across persistence, retrieval, zero-byte files, and incomplete states.
+   - Added 4 dedicated tests covering:
+     - `document_fileStorageKey_persistedAndReloadedByRepository()`: verifies persistence and retrieval via `findById` and `findByFileStorageKey`.
+     - `document_fileStorageKey_clearingFileMetadataClearsStorageKey()`: verifies that clearing metadata resets `fileStorageKey` to null in memory and database.
+     - `document_fileStorageKey_replacingFileChangesFileStorageKeyWhilePreservingLogicalStorageKey()`: verifies that replacing a file updates `fileStorageKey` to a new blob UUID while keeping `storageKey` invariant.
+     - `document_fileStorageKey_missingStorageKeyLeavesMetadataInconsistent()`: verifies that partial states with or without `fileStorageKey` are flagged as inconsistent and `hasFile()` returns false.
+
+### Files Modified
+- `src/main/java/com/trustvault/entity/Document.java`
+- `src/main/resources/schema.sql`
+- `src/main/java/com/trustvault/repository/DocumentRepository.java`
+- `src/test/java/com/trustvault/repository/DocumentPersistenceTest.java`
+- `PROMPTS.md`
+
+### Build & Verification Results
+- Command: `.\mvnw.cmd test`
+- Tests Executed: 126 total across 9 test classes (4 new tests added, all passed):
+  - `HealthControllerTest`: 2 tests passed.
+  - `DocumentPersistenceTest`: 22 tests passed (4 new tests added, all passed).
+  - `DocumentAuthorizationTest`: 25 tests passed.
+  - `AuditEventPersistenceTest`: 10 tests passed.
+  - `AuditServiceTest`: 8 tests passed.
+  - `BusinessAuditIntegrationTest`: 14 tests passed.
+  - `AuthenticationIntegrationTest`: 21 tests passed.
+  - `LocalStorageServiceTest`: 23 tests (17 passed, 6 skipped on Windows as expected).
+  - `TrustVaultApplicationTests`: 1 test passed.
+- Failures: 0, Errors: 0, Skipped: 6.
+- Build Status: `BUILD SUCCESS` (34.297 s).
+
+### Unresolved Issues & Next Steps
+- None. Step 1 database/entity preparation is complete.
+- Working tree remains uncommitted. Ready for Step 2 (upload validation service) or next instruction.
+
+---
+
+## 16. Milestone 2.4 — Stage 3, Step 1: Correct File Storage Key API
+
+### Objective & Scope
+Enforce strict physical blob key coupling by removing the unsafe five-argument convenience overload `setFileMetadata(String, String, Long, String, Instant)` from `Document.java` that generated synthetic random UUIDs internally. Require all metadata attachments to supply the explicit `UUID fileStorageKey` generated during the storage blob write.
+
+### Key Implementation Details
+1. **API Hardening (`Document.java`)**:
+   - Removed the 5-argument `setFileMetadata(...)` overload.
+   - Kept the 6-argument `setFileMetadata(UUID fileStorageKey, String originalName, String contentType, Long size, String checksum, Instant uploadedAt)` method as the sole mutating method for file metadata, guaranteeing `fileStorageKey != null` is enforced at compile time.
+2. **Test Updates (`DocumentPersistenceTest.java`)**:
+   - Updated all remaining 5-argument call sites in `DocumentPersistenceTest` to supply an explicit synthetic `UUID` (e.g., `doc.setFileMetadata(fileKey, ...)`).
+   - Confirmed via global search that zero 5-argument calls remain across main and test sources.
+3. **Verification**:
+   - Confirmed that production behavior is unchanged and no production call sites are broken.
+   - All authorization rules, storage abstractions, and database mappings remain untouched.
+
+### Files Modified
+- `src/main/java/com/trustvault/entity/Document.java`
+- `src/test/java/com/trustvault/repository/DocumentPersistenceTest.java`
+- `PROMPTS.md`
+
+### Build & Verification Results
+- Command: `.\mvnw.cmd test`
+- Tests Executed: 126 total across 9 test classes:
+  - `HealthControllerTest`: 2 tests passed.
+  - `DocumentPersistenceTest`: 22 tests passed.
+  - `DocumentAuthorizationTest`: 25 tests passed.
+  - `AuditEventPersistenceTest`: 10 tests passed.
+  - `AuditServiceTest`: 8 tests passed.
+  - `BusinessAuditIntegrationTest`: 14 tests passed.
+  - `AuthenticationIntegrationTest`: 21 tests passed.
+  - `LocalStorageServiceTest`: 23 tests (17 passed, 6 skipped on Windows as expected).
+  - `TrustVaultApplicationTests`: 1 test passed.
+- Failures: 0, Errors: 0, Skipped: 6.
+- Build Status: `BUILD SUCCESS` (35.214 s).
+
+### Unresolved Issues & Next Steps
+- None. API correction complete and verified. Working tree remains uncommitted.
+
+---
+
+## Session 17 — Milestone 2.4 Stage 3 Step 2: Implement File Validation Service
+**Date**: October 21, 2026
+**Commit**: Pending (working tree uncommitted per instructions)
+
+### Objective & Scope
+Implement the standalone file validation service and unit tests for TrustVault. Enforce strict size bounds, streaming limits, filename sanitization, MIME cross-checking, format signatures, UTF-8 text validation with NUL byte rejection, and in-memory Office Open XML (OOXML) container verification without filesystem extraction or storage integration.
+
+### Key Implementation Details
+1. **Validation Service (`FileValidationService.java`)**:
+   - Supported formats: PDF, DOCX, XLSX, PPTX, TXT, CSV, PNG, JPG, and JPEG.
+   - 10 MiB hard limit (10 × 1024 × 1024 bytes) enforced on declared size pre-check and proactive streaming byte-counting.
+   - Rejection of empty (0-byte) and negative-size files.
+   - Filename sanitization: strips Unix and Windows directory components, rejects directory traversal (`..`), NUL bytes, and control characters (ASCII < 32 and 127), and enforces 255-character maximum.
+   - MIME cross-checking: maps extensions to canonical MIME types and permits standard client aliases while stripping parameters (e.g. `charset=UTF-8`).
+   - Magic byte verification:
+     - PDF: `%PDF-` header.
+     - PNG: 8-byte PNG header (`89 50 4E 47 0D 0A 1A 0A`).
+     - JPEG: 3-byte SOI header (`FF D8 FF`).
+   - Text validation: validates strict UTF-8 character decoding (`CodingErrorAction.REPORT`) and rejects binary NUL bytes (`0x00`) for TXT and CSV.
+   - OOXML container validation:
+     - In-memory `ZipInputStream` verification without writing temporary files to disk.
+     - Requires `[Content_Types].xml` and format-specific root document entry (`word/document.xml` for DOCX, `xl/workbook.xml` for XLSX, `ppt/presentation.xml` for PPTX).
+     - Zip-Slip defense rejecting `..`, leading `/`, or `\\` in entry names.
+     - Bounded archive entry count (max 1,000) and decompressed byte limit (max 50 MiB) against Zip-Bombs.
+   - SHA-256 digest calculation: computes standard 64-character lowercase hexadecimal hash.
+   - Security disclaimer: documented in Javadoc that format/signature validation does not guarantee malware-free content.
+2. **Exception Handling (`FileValidationException.java`)**:
+   - Subclasses `IllegalArgumentException` so existing `GlobalExceptionHandler` automatically maps validation rejections to HTTP 400 Bad Request.
+3. **Validated Metadata Record (`ValidatedFileMetadata.java`)**:
+   - Immutable record returning `originalFilename`, `contentType`, `size`, `checksum`, `content` (`byte[]`), and `openStream()`. Matches the parameters required by `Document.setFileMetadata(UUID, ...)`.
+4. **Unit Test Suite (`FileValidationServiceTest.java`)**:
+   - 50 unit tests across 8 nested test classes covering all valid formats, size bounds, mismatches, plaintext checks, OOXML archives, renamed ZIPs, unsafe filenames, and stream limits with small synthetic fixtures.
+
+### Files Created & Modified
+- `src/main/java/com/trustvault/storage/FileValidationException.java` (created)
+- `src/main/java/com/trustvault/storage/ValidatedFileMetadata.java` (created)
+- `src/main/java/com/trustvault/storage/FileValidationService.java` (created)
+- `src/test/java/com/trustvault/storage/FileValidationServiceTest.java` (created)
+- `PROMPTS.md` (updated)
+
+### Build & Verification Results
+- Command: `.\mvnw.cmd test`
+- Tests Executed: 176 total across 10 test classes:
+  - `HealthControllerTest`: 2 tests passed.
+  - `DocumentPersistenceTest`: 22 tests passed.
+  - `DocumentAuthorizationTest`: 25 tests passed.
+  - `AuditEventPersistenceTest`: 10 tests passed.
+  - `AuditServiceTest`: 8 tests passed.
+  - `BusinessAuditIntegrationTest`: 14 tests passed.
+  - `AuthenticationIntegrationTest`: 21 tests passed.
+  - `FileValidationServiceTest`: 50 tests passed.
+  - `LocalStorageServiceTest`: 23 tests (17 passed, 6 skipped on Windows as expected).
+  - `TrustVaultApplicationTests`: 1 test passed.
+- Failures: 0, Errors: 0, Skipped: 6.
+- Build Status: `BUILD SUCCESS` (38.316 s).
+
+### Unresolved Issues & Next Steps
+- None. File validation service and test suite complete. Storage integration, DocumentService integration, and controller endpoints deferred to subsequent steps. Working tree remains uncommitted.
+
+---
+
+## Session 18 — Milestone 2.4 Stage 3 Step 3: Multipart Limits and Exception Handling
+**Date**: October 21, 2026
+**Commit**: Pending (working tree uncommitted per instructions)
+
+### Objective & Scope
+Configure Spring Boot multipart upload limits and add focused, secure exception handling for file uploads and storage operations. Map upload size violations, validation errors, missing storage files, and storage failures to clean, sanitized HTTP error envelopes without exposing internal filesystem paths, storage keys, or stack traces.
+
+### Key Implementation Details
+1. **Multipart Configuration**:
+   - `src/main/resources/application.yml`: Configured `spring.servlet.multipart.max-file-size: ${SPRING_SERVLET_MULTIPART_MAX_FILE_SIZE:10MB}` (10 MiB) and `spring.servlet.multipart.max-request-size: ${SPRING_SERVLET_MULTIPART_MAX_REQUEST_SIZE:11MB}` (11 MiB to accommodate multipart boundary and field overhead).
+   - `src/test/resources/application.properties`: Added corresponding test configuration `spring.servlet.multipart.max-file-size=10MB` and `spring.servlet.multipart.max-request-size=11MB`.
+2. **Centralized Exception Handling (`GlobalExceptionHandler.java`)**:
+   - `MaxUploadSizeExceededException`: Maps to HTTP 413 Payload Too Large with user-facing message `"Upload payload exceeds the maximum permitted size limit of 10 MiB."`.
+   - `FileValidationException`: Maps to HTTP 400 Bad Request returning specific client-safe validation messages (e.g. format signature or archive violations).
+   - `StorageFileNotFoundException`: Maps to HTTP 404 Not Found with sanitized message `"The requested document file could not be found."`. Excludes storage keys and filesystem paths.
+   - `StorageException`: Maps to HTTP 500 Internal Server Error with sanitized message `"A storage error occurred while processing the document file."`. Full exception and internal message logged to server log at `ERROR` level, while client response suppresses sensitive paths or I/O details.
+   - Preserved all existing mappings for `MethodArgumentNotValidException` (400), `AccessDeniedException` (403), `ResourceNotFoundException` (404), `NoResourceFoundException` (404), `IllegalArgumentException` (400), and unhandled `Exception` (500).
+3. **Tests (`GlobalExceptionHandlerTest.java`)**:
+   - Created 14 unit and integration tests across 3 nested test classes:
+     - `MultipartConfigTests`: Verified `MultipartProperties` bean reflects 10 MiB max-file-size and 11 MiB max-request-size.
+     - `StorageAndUploadHandlerTests`: Direct handler invocation testing HTTP status codes, error payloads, and strict sanitization against path leakage for storage exceptions.
+     - `MockMvcIntegrationTests`: Full dispatch testing via standalone MockMvc verifying routing and status codes for 413, 400, 404, 500, and existing handlers (403, 404, 400, 500).
+
+### Files Created & Modified
+- `src/main/resources/application.yml` (modified)
+- `src/test/resources/application.properties` (modified)
+- `src/main/java/com/trustvault/exception/GlobalExceptionHandler.java` (modified)
+- `src/test/java/com/trustvault/exception/GlobalExceptionHandlerTest.java` (created)
+- `PROMPTS.md` (updated)
+
+### Build & Verification Results
+- Command: `.\mvnw.cmd test`
+- Tests Executed: 190 total across 11 test classes:
+  - `HealthControllerTest`: 2 tests passed.
+  - `DocumentPersistenceTest`: 22 tests passed.
+  - `DocumentAuthorizationTest`: 25 tests passed.
+  - `AuditEventPersistenceTest`: 10 tests passed.
+  - `AuditServiceTest`: 8 tests passed.
+  - `BusinessAuditIntegrationTest`: 14 tests passed.
+  - `AuthenticationIntegrationTest`: 21 tests passed.
+  - `FileValidationServiceTest`: 50 tests passed.
+  - `GlobalExceptionHandlerTest`: 14 tests passed.
+  - `LocalStorageServiceTest`: 23 tests (17 passed, 6 skipped on Windows as expected).
+  - `TrustVaultApplicationTests`: 1 test passed.
+- Failures: 0, Errors: 0, Skipped: 6.
+- Build Status: `BUILD SUCCESS` (37.897 s).
+
+### Unresolved Issues & Next Steps
+- None. Multipart limits and exception handlers are in place and verified. Working tree remains uncommitted.
+
+---
+
+## Session 19 — Milestone 2.4 Stage 3 Step 4: Update DocumentResponseDto
+**Date**: October 21, 2026
+**Commit**: Pending (working tree uncommitted per instructions)
+
+### Objective & Scope
+Update the client-facing document response transfer object (`DocumentResponseDto`) to expose safe file metadata without leaking internal storage keys, file checksums, filesystem paths, or raw payload contents. Define explicit semantics for metadata-only documents and attached files, and provide comprehensive unit tests.
+
+### Key Implementation Details
+1. **Response DTO Updates (`DocumentResponseDto.java`)**:
+   - Added safe file metadata record components:
+     - `boolean hasFile`: Indicates whether an associated file payload is fully attached.
+     - `String fileOriginalName`: Client-supplied original filename (null when `hasFile=false`).
+     - `String fileContentType`: Validated MIME type (null when `hasFile=false`).
+     - `Long fileSize`: Payload byte count (null when `hasFile=false`, 0L for zero-byte files).
+     - `Instant fileUploadedAt`: Timestamp of the upload (null when `hasFile=false`).
+   - Retained the logical document identifier `UUID storageKey` required for client API navigation.
+   - Strictly omitted internal identifiers and sensitive storage details: `fileStorageKey`, `fileChecksum`, and filesystem directory paths are not exposed.
+   - Added backward-compatible 7-argument constructor defaulting `hasFile=false` and null file fields.
+   - Updated `from(Document document)` factory method:
+     - Uses `document.hasFile()` to determine file presence.
+     - When `hasFile=false`, all file metadata fields are strictly `null`.
+     - When `hasFile=true`, populates all 5 safe file fields.
+     - Handles null `document` and null `document.getOwner()` safely.
+2. **Unit Tests (`DocumentResponseDtoTest.java`)**:
+   - Created 7 focused unit tests across 2 nested test classes:
+     - `MetadataOnlyDocumentTests`: Verifies metadata-only document mapping (`hasFile=false`, file fields null), document with null owner, null document input, and the backward-compatible 7-argument constructor.
+     - `AttachedFileDocumentTests`: Verifies complete file attachment mapping (`hasFile=true`, all fields populated), zero-byte files (`hasFile=true`, `fileSize=0`), and incomplete metadata handling (`hasFile=false`, file fields null).
+
+### Files Created & Modified
+- `src/main/java/com/trustvault/dto/DocumentResponseDto.java` (modified)
+- `src/test/java/com/trustvault/dto/DocumentResponseDtoTest.java` (created)
+- `PROMPTS.md` (updated)
+
+### Build & Verification Results
+- Command: `.\mvnw.cmd test`
+- Tests Executed: 197 total across 12 test classes:
+  - `HealthControllerTest`: 2 tests passed.
+  - `DocumentResponseDtoTest`: 7 tests passed.
+  - `DocumentPersistenceTest`: 22 tests passed.
+  - `DocumentAuthorizationTest`: 25 tests passed.
+  - `AuditEventPersistenceTest`: 10 tests passed.
+  - `AuditServiceTest`: 8 tests passed.
+  - `BusinessAuditIntegrationTest`: 14 tests passed.
+  - `AuthenticationIntegrationTest`: 21 tests passed.
+  - `FileValidationServiceTest`: 50 tests passed.
+  - `GlobalExceptionHandlerTest`: 14 tests passed.
+  - `LocalStorageServiceTest`: 23 tests (17 passed, 6 skipped on Windows as expected).
+  - `TrustVaultApplicationTests`: 1 test passed.
+- Failures: 0, Errors: 0, Skipped: 6.
+- Build Status: `BUILD SUCCESS` (41.155 s).
+
+### Unresolved Issues & Next Steps
+- None. DocumentResponseDto and its tests are complete and verified. Ready for Step 5 (DocumentService upload integration). Working tree remains uncommitted.
+
+---
+
+## Session 20 — Milestone 2.4 Stage 3 Step 5: Integrate Secure File Upload into DocumentService
+**Date**: October 21, 2026
+**Commit**: Pending (working tree uncommitted per instructions)
+
+### Objective & Scope
+Integrate secure file uploads into `DocumentService` without exposing HTTP endpoints or download behavior yet. Enforce strict in-memory streaming validation, pessimistic document row locking (`SELECT ... FOR UPDATE`), authorization checks with `SharePermission.EDIT`, non-overwriting blob generation (`UUID.randomUUID()`), transaction synchronization for post-commit deletion of superseded blobs and rollback cleanup of new blobs, same-transaction `FILE_UPLOAD` audit logging, and resilient error handling for cleanup operations.
+
+### Key Implementation Details
+1. **DocumentService Integration (`DocumentService.java`)**:
+   - Integrated `StorageService` and `FileValidationService` dependencies with backward-compatible constructors (3-arg, 4-arg, and 6-arg `@Autowired`).
+   - Implemented `uploadFile(Long documentId, InputStream inputStream, String originalFilename, String declaredContentType, Long declaredSize, String requestingUsername, String clientIp)`:
+     - **Pre-Storage File Validation**: Validates byte signatures, declared MIME types, normalized extensions, streaming size bounds (10 MiB limit), and computes SHA-256 in memory via `fileValidationService.validate(...)`.
+     - **Unique Physical Key Allocation**: Generates a fresh random UUID (`newFileStorageKey = UUID.randomUUID()`) to prevent in-place overwrites of existing storage blobs.
+     - **Transaction Rollback Synchronization**: Uses `TransactionSynchronizationManager.registerSynchronization` with `afterCompletion(STATUS_ROLLED_BACK)` to guarantee uncommitted blobs are deleted from disk if the transaction rolls back or fails.
+     - **Storage Blob Creation**: Stores validated bytes via `storageService.store(newFileStorageKey, validated.openStream())`.
+     - **Pessimistic Locking & Authorization**: Calls `authorizationService.getAuthorizedDocumentForUpdate(documentId, requestingUsername, SharePermission.EDIT)` which locks the document row (`findByIdForUpdate`) and enforces owner or EDIT-collaborator access (throwing 404 for unshared/unknown docs and 403 for READ-only grantees).
+     - **Atomic Metadata & Key Update**: Captures the previous `oldFileStorageKey`, applies new metadata and `fileStorageKey` via `document.setFileMetadata(...)`, and persists to the database.
+     - **Same-Transaction Audit Event**: Emits `AuditAction.FILE_UPLOAD` success with sanitized metadata (filename, size, MIME type) within the same transaction.
+     - **Post-Commit Cleanup Synchronization**: Registers a synchronization with `afterCommit()` to delete the superseded blob (`oldFileStorageKey`); failures during old-blob deletion are logged at `ERROR` level but do not invalidate the successfully committed database transaction.
+   - Added `uploadFile(Long documentId, MultipartFile file, String requestingUsername, String clientIp)` convenience overload.
+2. **Transaction & Failure Handling Characteristics**:
+   - Filesystem blobs and database rows cannot commit atomically.
+   - Dual-phase cleanup via Spring transaction synchronization ensures:
+     - Storage failure before DB mutation: clean abort, no DB rows altered.
+     - Database failure after blob creation: `afterCompletion(STATUS_ROLLED_BACK)` purges the orphaned new blob while preserving the old blob and old metadata intact.
+     - Old-blob deletion failure after commit: non-fatal, logs an error for administrative or background reconciliation without rolling back a committed transaction.
+3. **Integration Test Suite (`DocumentFileUploadServiceTest.java`)**:
+   - Implemented 10 comprehensive service-level tests across 4 nested test categories:
+     - `SuccessfulUploadTests`: Initial file upload by owner, multipart convenience upload, EDIT collaborator file upload, and replacement upload verifying superseded blob deletion post-commit.
+     - `FailureAndRollbackTests`: File validation failure preserving existing metadata/blobs, storage write failure aborting cleanly without DB mutation, and transaction rollback after blob creation purging the new blob.
+     - `AuthorizationAndAuditTests`: READ collaborator denied upload with 403 (audited as ACCESS_DENIED), and unshared user denied with 404 anti-IDOR (audited with reason `NOT_FOUND_OR_UNAUTHORIZED`).
+     - `PostCommitResilienceTests`: Superseded blob deletion failure after commit does not fail or rollback the committed transaction.
+
+### Files Created & Modified
+- `src/main/java/com/trustvault/service/DocumentService.java` (modified)
+- `src/test/java/com/trustvault/service/DocumentFileUploadServiceTest.java` (created)
+- `PROMPTS.md` (updated)
+
+### Build & Verification Results
+- Command: `.\mvnw.cmd test`
+- Tests Executed: 207 total across 13 test classes:
+  - `HealthControllerTest`: 2 tests passed.
+  - `DocumentResponseDtoTest`: 7 tests passed.
+  - `DocumentPersistenceTest`: 22 tests passed.
+  - `DocumentAuthorizationTest`: 25 tests passed.
+  - `AuditEventPersistenceTest`: 10 tests passed.
+  - `AuditServiceTest`: 8 tests passed.
+  - `BusinessAuditIntegrationTest`: 14 tests passed.
+  - `AuthenticationIntegrationTest`: 21 tests passed.
+  - `DocumentFileUploadServiceTest`: 10 tests passed.
+  - `FileValidationServiceTest`: 50 tests passed.
+  - `GlobalExceptionHandlerTest`: 14 tests passed.
+  - `LocalStorageServiceTest`: 23 tests (17 passed, 6 skipped on Windows as expected).
+  - `TrustVaultApplicationTests`: 1 test passed.
+- Failures: 0, Errors: 0, Skipped: 6.
+- Build Status: `BUILD SUCCESS` (53.521 s).
+
+### Unresolved Issues & Next Steps
+- None. `DocumentService` upload workflow integration and all unit/integration tests are verified. Ready for Milestone 2.4 Stage 3 Step 6 (HTTP controller and endpoint integration). Working tree remains uncommitted.
+
+---
+
+## Session 21 — Milestone 2.4 Stage 3 Step 5 Review Fixes: Upload Transaction Safety Hardening
+**Date**: October 21, 2026
+**Commit**: Pending (working tree uncommitted per instructions)
+
+### Objective & Scope
+Implement the five targeted review findings from the Step 5 code review:
+1. Close the multipart input stream deterministically via try-with-resources.
+2. Harden transaction synchronization checks to verify both `isSynchronizationActive()` and `isActualTransactionActive()` before registering callbacks, and ensure non-transactional fallback cleanup paths cannot be skipped.
+3. Configure explicit transaction rollback policy `@Transactional(rollbackFor = Exception.class)` on `DocumentService`.
+4. Add an administrator authorization test verifying `ROLE_ADMIN` cannot bypass document authorization and receives 404 anti-IDOR with clean blob cleanup and audit trail.
+5. Fix whitespace trailing blank lines in test `application.properties`.
+
+### Key Implementation Details
+1. **Multipart Stream Closure (`DocumentService.java`)**:
+   - Updated `uploadFile(Long, MultipartFile, String, String)` to wrap `file.getInputStream()` in a try-with-resources block (`try (InputStream inputStream = file.getInputStream()) { ... }`).
+   - Ensures underlying file descriptors and OS handles are deterministically closed across all success and error paths without leaking temporary upload resources.
+2. **Transaction Synchronization Hardening (`DocumentService.java`)**:
+   - Added `boolean txSyncActive = TransactionSynchronizationManager.isSynchronizationActive() && TransactionSynchronizationManager.isActualTransactionActive();`.
+   - Used `txSyncActive` before registering rollback (`afterCompletion(STATUS_ROLLED_BACK)`) and post-commit (`afterCommit()`) hooks.
+   - Handled non-transactional contexts explicitly: fallback immediate cleanup purges the uncommitted blob on exception when running outside active transaction synchronization, and deletes old blobs directly when post-commit synchronization is unavailable.
+3. **Explicit Rollback Policy (`DocumentService.java`)**:
+   - Updated class-level annotation to `@Transactional(rollbackFor = Exception.class)` for defense-in-depth against checked exceptions.
+4. **Administrator Authorization Test (`DocumentFileUploadServiceTest.java`)**:
+   - Added `testAdminWithoutShareGrantDeniedWith404`:
+     - Creates Alice's private document with an initial file.
+     - `admin` user (`ROLE_ADMIN`) attempts to upload to Alice's document without a grant.
+     - Confirms `ResourceNotFoundException` (404) is thrown with anti-IDOR message.
+     - Confirms Alice's metadata and existing file blob are unchanged.
+     - Confirms no orphaned blob was left on disk (verified via `Files.list(storageDir)`).
+     - Confirms denial audit event was recorded with `reason=NOT_FOUND_OR_UNAUTHORIZED`.
+5. **Whitespace Cleanup (`src/test/resources/application.properties`)**:
+   - Removed trailing blank lines at EOF; verified with `git diff --check`.
+
+### Files Modified
+- `src/main/java/com/trustvault/service/DocumentService.java` (modified)
+- `src/test/java/com/trustvault/service/DocumentFileUploadServiceTest.java` (modified)
+- `src/test/resources/application.properties` (modified)
+- `PROMPTS.md` (updated)
+
+### Build & Verification Results
+- `.\mvnw.cmd test -Dtest=DocumentFileUploadServiceTest`: 11 tests passed (0 failures, 0 errors, 0 skipped, 21.029 s).
+- `.\mvnw.cmd test`: 208 tests passed across 13 test classes (0 failures, 0 errors, 6 skipped on Windows as expected, 47.039 s).
+- `git diff --check`: 0 whitespace errors.
+
+### Unresolved Issues & Next Steps
+- None. Review fixes are complete, verified, and passing. Ready for Milestone 2.4 Stage 3 Step 6 (HTTP controller and endpoint integration). Working tree remains uncommitted.

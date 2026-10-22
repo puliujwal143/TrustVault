@@ -1,0 +1,65 @@
+# ==============================================================================
+# TrustVault - .dockerignore
+# Exclude unnecessary files and sensitive data from Docker build context
+# ==============================================================================
+
+# Git metadata
+.git/
+.gitignore
+
+# Environment variables and local secrets
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.p12
+*.jks
+*.keystore
+
+# Build output and compiled classes
+target/
+*.class
+*.jar
+*.war
+*.nar
+*.ear
+
+# Private storage and local document files
+private-storage/
+uploads/
+storage/
+data/
+*.bin
+*.tmp
+*.pdf
+*.docx
+*.xlsx
+*.enc
+
+# IDE, editor, and workspace files
+.idea/
+.vscode/
+*.iml
+*.iws
+*.ipr
+*.code-workspace
+.project
+.classpath
+.settings/
+.springBeans
+.sts4-cache/
+
+# OS-generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+[Dd]esktop.ini
+
+# Logs
+logs/
+*.log

@@ -7,14 +7,17 @@ import com.trustvault.entity.User;
 import com.trustvault.exception.ResourceNotFoundException;
 import com.trustvault.repository.DocumentRepository;
 import com.trustvault.repository.UserRepository;
+import com.trustvault.dto.DocumentDownloadDto;
 import com.trustvault.storage.FileValidationException;
 import com.trustvault.storage.FileValidationService;
 import com.trustvault.storage.StorageException;
+import com.trustvault.storage.StorageFileNotFoundException;
 import com.trustvault.storage.StorageService;
 import com.trustvault.storage.ValidatedFileMetadata;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.core.io.Resource;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -140,7 +143,7 @@ public class DocumentService {
      * @param requestingUsername the authenticated username
      * @return the Document entity
      */
-    @Transactional(readOnly = true)
+    @Transactional
     public Document getDocument(Long documentId, String requestingUsername) {
         Document document = authorizationService.getAuthorizedDocument(documentId, requestingUsername, SharePermission.READ);
         if (auditService != null) {
@@ -213,8 +216,32 @@ public class DocumentService {
         Document document = authorizationService.getAuthorizedDocumentForOwnerForUpdate(documentId, requestingUsername);
         Long docId = document.getId();
         UUID storageKey = document.getStorageKey();
+        UUID fileStorageKey = document.getFileStorageKey();
 
         documentRepository.delete(document);
+
+        // If an attached file payload exists, clean up physical blob post-commit
+        if (fileStorageKey != null && storageService != null) {
+            if (TransactionSynchronizationManager.isSynchronizationActive()) {
+                TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                    @Override
+                    public void afterCommit() {
+                        try {
+                            storageService.delete(fileStorageKey);
+                            log.info("Successfully deleted document file blob {} after deletion commit", fileStorageKey);
+                        } catch (Exception e) {
+                            log.error("Failed to delete document file blob {} after deletion commit: {}", fileStorageKey, e.getMessage(), e);
+                        }
+                    }
+                });
+            } else {
+                try {
+                    storageService.delete(fileStorageKey);
+                } catch (Exception e) {
+                    log.error("Failed to delete document file blob {}: {}", fileStorageKey, e.getMessage(), e);
+                }
+            }
+        }
 
         if (auditService != null) {
             auditService.recordSuccess(
@@ -436,6 +463,103 @@ public class DocumentService {
         } catch (IOException e) {
             throw new FileValidationException("Failed to read upload file stream: " + e.getMessage(), e);
         }
+    }
+
+    /**
+     * Securely retrieves a document's binary file payload for download.
+     *
+     * <p>Security & Verification Enforcement:
+     * <ul>
+     *   <li>Enforces read authorization via {@link DocumentAuthorizationService} (requires {@link SharePermission#READ}).</li>
+     *   <li>Validates that the document has an associated binary file payload (throws {@link ResourceNotFoundException} if not).</li>
+     *   <li>Verifies that the file exists in private storage and does not exceed the maximum permitted size limit.</li>
+     *   <li>Computes and verifies SHA-256 integrity against the stored checksum using bounded streaming.</li>
+     *   <li>Fails closed on checksum mismatch: never streams corrupted or unverified bytes to the client.</li>
+     *   <li>Records {@link AuditAction#FILE_DOWNLOAD} audit event upon successful verification.</li>
+     * </ul>
+     *
+     * @param documentId         the target document database ID
+     * @param requestingUsername the authenticated user requesting the download
+     * @param clientIp           client IP address for security audit logging
+     * @return a {@link DocumentDownloadDto} containing the validated file resource and metadata
+     * @throws ResourceNotFoundException if document is not found, caller has no access rights (anti-IDOR),
+     *                                   or document has no attached file
+     * @throws StorageFileNotFoundException if the physical file blob is missing from storage
+     * @throws StorageException          if file integrity verification fails or an I/O error occurs
+     */
+    @Transactional
+    public DocumentDownloadDto downloadFile(Long documentId, String requestingUsername, String clientIp) {
+        Objects.requireNonNull(documentId, "Document ID must not be null");
+        Objects.requireNonNull(requestingUsername, "Requesting username must not be null");
+
+        // 1. Authorize caller with READ permission (owner, READ grantee, or EDIT grantee)
+        Document document = authorizationService.getAuthorizedDocument(documentId, requestingUsername, SharePermission.READ);
+
+        // 2. Verify document has an attached file payload
+        if (!document.hasFile() || document.getFileStorageKey() == null) {
+            throw new ResourceNotFoundException("Document has no attached file payload: " + documentId);
+        }
+
+        UUID fileStorageKey = document.getFileStorageKey();
+
+        // 3. Verify file exists in physical storage
+        if (!storageService.exists(fileStorageKey)) {
+            throw new StorageFileNotFoundException("File blob not found in storage for key: " + fileStorageKey);
+        }
+
+        // 4. Verify file size bounds (reject arbitrary oversized files)
+        long actualSize = storageService.getFileSize(fileStorageKey);
+        if (actualSize > FileValidationService.MAX_FILE_SIZE_BYTES) {
+            log.error("Stored file for document {} exceeds maximum permitted limit: {} bytes", documentId, actualSize);
+            throw new StorageException("File size exceeds maximum permitted limit");
+        }
+        if (document.getFileSize() != null && actualSize != document.getFileSize()) {
+            log.error("Stored file size ({}) does not match recorded metadata size ({}) for document {}",
+                    actualSize, document.getFileSize(), documentId);
+            throw new StorageException("File size mismatch during integrity verification");
+        }
+
+        // 5. Compute SHA-256 integrity using bounded streaming and verify against saved checksum
+        String calculatedChecksum;
+        try (InputStream is = storageService.loadAsStream(fileStorageKey)) {
+            calculatedChecksum = fileValidationService.calculateSha256(is);
+        } catch (IOException e) {
+            log.error("I/O error reading file blob for document {}: {}", documentId, e.getMessage());
+            throw new StorageException("Failed to read document file for integrity verification", e);
+        }
+
+        if (document.getFileChecksum() == null || !calculatedChecksum.equalsIgnoreCase(document.getFileChecksum())) {
+            log.error("SHA-256 integrity check failed for document {}: expected '{}', calculated '{}'",
+                    documentId, document.getFileChecksum(), calculatedChecksum);
+            throw new StorageException("File integrity verification failed: checksum mismatch");
+        }
+
+        // 6. Load readable Resource only after integrity verification succeeds
+        Resource resource = storageService.loadAsResource(fileStorageKey);
+
+        // 7. Record FILE_DOWNLOAD audit event in the same transaction
+        if (auditService != null) {
+            auditService.recordSuccess(
+                    AuditAction.FILE_DOWNLOAD,
+                    requestingUsername.trim(),
+                    document.getId(),
+                    document.getStorageKey(),
+                    null,
+                    clientIp,
+                    String.format(Locale.ROOT, "filename=%s,size=%d,mime=%s",
+                            document.getFileOriginalName(), document.getFileSize(), document.getFileContentType())
+            );
+        }
+
+        log.info("File '{}' (size: {} bytes) verified and retrieved for document {} by '{}'",
+                document.getFileOriginalName(), document.getFileSize(), document.getId(), requestingUsername);
+
+        return new DocumentDownloadDto(
+                resource,
+                document.getFileOriginalName(),
+                document.getFileContentType(),
+                document.getFileSize()
+        );
     }
 
     private String validateAndSanitizeTitle(String title) {

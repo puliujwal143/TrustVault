@@ -1,137 +1,369 @@
 # TrustVault — Architecture & Security Blueprint
 
-This document explains the architectural principles, component responsibilities, and security design for **TrustVault**. It serves as an architectural reference and interview preparation guide.
+This document details the architectural design, component responsibilities, data flows, and security boundaries implemented in **TrustVault**. It serves as an architectural reference and evaluator guide, describing both the active production implementation and identified residual risks.
+
+For comprehensive threat modeling, vulnerability classifications, and risk assessments, refer to the companion document [`THREATS.md`](file:///d:/TrustVault/THREATS.md).
 
 ---
 
-## 1. Architectural Overview & Layered Design
+## 1. Architectural Overview & Technology Stack
 
-TrustVault adheres to a clean, multi-layered enterprise architecture. Each layer maintains a single, well-defined responsibility with strict unidirectional dependencies:
+TrustVault is engineered as a secure, defense-in-depth document management monolith. It employs a clean multi-tiered architecture with unidirectional layer dependencies, strict principle of least privilege, and decoupled storage mechanisms.
+
+### Core Technology Stack
+- **Runtime & Language:** Java 21 (LTS)
+- **Framework:** Spring Boot 3.3.5
+- **Security Engine:** Spring Security 6 (Form Login, Synchronizer Token CSRF, Session Fixation Migration, Concurrent Session Management, Role-Based & Attribute-Based Authorization)
+- **Persistence & ORM:** Spring Data JPA / Hibernate with PostgreSQL Dialect
+- **Database:** PostgreSQL 15+ (Relational store for user accounts, document metadata, sharing grants, and immutable audit events)
+- **Presentation Layer:** Thymeleaf 3 with Spring Security Layout Dialect (Server-side rendering, contextual authorization fragments, CSRF integration)
+- **Blob Storage Subsystem:** Local Private File Storage isolated outside the application document root
+- **Build & Dependency Tooling:** Apache Maven with Maven Wrapper (`mvnw`)
+
+---
+
+## 2. Layered Architecture & Component Responsibilities
+
+The system is organized into distinct, decoupled architectural layers:
 
 ```
-[ HTTP Request ]
+[ Client Request: Browser / API Client ]
+                   │
+                   ▼
+┌────────────────────────────────────────────────────────┐
+│               Spring Security Filter Chain             │
+│  - CSRF Token Validation (Synchronizer Token Pattern)  │
+│  - Session Authentication & Fixation Migration         │
+│  - Concurrent Session Tracking (SessionRegistry)       │
+│  - HTTP Header Hardening (Cache-Control, nosniff, etc.)│
+└──────────────────────────┬─────────────────────────────┘
+                           │
+                           ▼
+┌────────────────────────────────────────────────────────┐
+│                   Controller Layer                     │
+│  - Web View Controllers (Thymeleaf Model & Routing)    │
+│  - REST API Controllers (JSON / Multipart Endpoints)   │
+│  - Request DTO Validation (@Valid, Bean Validation)    │
+│  - Filename Header Sanitization (CRLF & Quote Defense) │
+└─────────────┬────────────────────────────┬─────────────┘
+              │ (Web / REST Flows)         │ (Exceptions)
+              ▼                            ▼
+┌──────────────────────────────┐ ┌───────────────────────┐
+│        Service Layer         │ │GlobalExceptionHandler │
+│  - DocumentAuthorization     │ │ - Sanitized ErrorDTO  │
+│  - DocumentService           │ │ - Anti-Enumeration 404│
+│  - DocumentShareService      │ │ - No Stack Traces     │
+│  - UserService               │ └───────────────────────┘
+│  - FileValidationService     │
+│  - AuditService (Tx-Aware)   │
+└───────┬──────────────┬───────┘
+        │              │
+        ▼              ▼
+┌──────────────────┐ ┌───────────────────────────────────┐
+│ Repository Layer │ │      Private Storage Engine       │
+│ (Spring Data JPA)│ │      (LocalStorageService)        │
+│ - Param Queries  │ │ - Isolated ./private-storage/     │
+│ - Zero Raw SQL   │ │ - Nonce/UUID Key Decoupling       │
+│ - Scoped Selects │ │ - Path Traversal / Symlink Defense│
+└────────┬─────────┘ └─────────────────┬─────────────────┘
+         │                             │
+         ▼                             ▼
+┌──────────────────┐         ┌───────────────────┐
+│ PostgreSQL Store │         │ Physical OS Disk  │
+└──────────────────┘         └───────────────────┘
+```
+
+### A. Security Filter Chain (`com.trustvault.security`)
+- **Primary Role:** Authenticate callers, enforce session management policies, and validate CSRF tokens prior to controller execution.
+- **Responsibilities:**
+  - Enforce authentication on all protected routes while maintaining explicit whitelists (`/login`, `/css/**`, `/js/**`, `/api/health`).
+  - Provide session fixation protection by issuing a fresh session ID upon authentication (`changeSessionId()`).
+  - Intercept logout requests via `POST /logout`, invalidating the session, clearing the `SecurityContext`, and expiring cookies.
+  - Track active sessions via an in-memory `SessionRegistry` for concurrency tracking and post-commit invalidation.
+
+### B. Controller Layer (`com.trustvault.controller`)
+- **Primary Role:** Handle HTTP protocol contracts, request deserialization, parameter validation, and view/response rendering.
+- **Responsibilities:**
+  - **Web View Controllers:** [`AuthController`](file:///d:/TrustVault/src/main/java/com/trustvault/controller/AuthController.java), [`DashboardController`](file:///d:/TrustVault/src/main/java/com/trustvault/controller/DashboardController.java), [`DocumentController`](file:///d:/TrustVault/src/main/java/com/trustvault/controller/DocumentController.java), and [`AuditViewController`](file:///d:/TrustVault/src/main/java/com/trustvault/controller/AuditViewController.java) manage HTML page navigation and UI state.
+  - **REST Controllers:** [`DocumentFileUploadController`](file:///d:/TrustVault/src/main/java/com/trustvault/controller/DocumentFileUploadController.java), [`DocumentFileDownloadController`](file:///d:/TrustVault/src/main/java/com/trustvault/controller/DocumentFileDownloadController.java), and [`DocumentShareRestController`](file:///d:/TrustVault/src/main/java/com/trustvault/controller/DocumentShareRestController.java) manage programmatic data exchange.
+  - Sanitize HTTP response headers (e.g., stripping carriage returns, line feeds, semicolons, and quotes from `Content-Disposition` in [`DocumentController.sanitizeFilenameForHeader`](file:///d:/TrustVault/src/main/java/com/trustvault/controller/DocumentController.java#L137)) to prevent HTTP response splitting.
+  - **Boundaries:** Controllers contain no business logic, direct database queries, or raw disk operations.
+
+### C. Exception Handling Boundary (`com.trustvault.exception`)
+- **Primary Role:** Centralize failure management and prevent information leakage.
+- **Responsibilities:**
+  - [`GlobalExceptionHandler`](file:///d:/TrustVault/src/main/java/com/trustvault/exception/GlobalExceptionHandler.java) intercepts domain and runtime exceptions (`ResourceNotFoundException`, `AccessDeniedException`, `StorageException`, `StorageFileNotFoundException`, `MethodArgumentNotValidException`, and uncaught `Exception`).
+  - Converts errors into sanitized [`ErrorResponseDto`](file:///d:/TrustVault/src/main/java/com/trustvault/dto/ErrorResponseDto.java) objects or standardized web views.
+  - Completely strips stack traces, database schema constraints, physical file paths, and internal storage UUIDs from all responses.
+
+### D. Service Layer (`com.trustvault.service`, `com.trustvault.storage`)
+- **Primary Role:** Orchestrate business workflows, enforce granular authorization, manage transactions, and coordinate audit logging.
+- **Responsibilities:**
+  - Verify caller authorization via [`DocumentAuthorizationService`](file:///d:/TrustVault/src/main/java/com/trustvault/service/DocumentAuthorizationService.java) before any data is read or written.
+  - Execute file structure, MIME type, and decompression safety checks via [`FileValidationService`](file:///d:/TrustVault/src/main/java/com/trustvault/storage/FileValidationService.java).
+  - Manage transactional boundaries (`@Transactional`) ensuring atomic rollbacks upon failure.
+  - Dispatch audit events via [`AuditService`](file:///d:/TrustVault/src/main/java/com/trustvault/service/AuditService.java) with appropriate propagation strategies.
+
+### E. Repository Layer (`com.trustvault.repository`)
+- **Primary Role:** Provide safe, parameterized persistence operations over PostgreSQL.
+- **Responsibilities:**
+  - Use Spring Data JPA derived queries and typed JPQL to completely eliminate SQL injection risks.
+  - Provide isolated entity access for users, documents, document shares, and audit events.
+  - Contain no business logic or file I/O operations.
+
+### F. Storage Subsystem (`com.trustvault.storage`)
+- **Primary Role:** Provide isolated, tamper-evident private blob persistence.
+- **Responsibilities:**
+  - [`LocalStorageService`](file:///d:/TrustVault/src/main/java/com/trustvault/storage/LocalStorageService.java) isolates files in a configured private directory (`./private-storage/uploads`), completely outside public web roots.
+  - Assigns randomly generated UUID storage keys to stored files (`{storageKey}.bin`), eliminating client-controlled file paths.
+  - Rejects symbolic links (`LinkOption.NOFOLLOW_LINKS`) and validates canonical path containment to prevent path traversal attacks.
+
+---
+
+## 3. High-Level Request & Data Flows
+
+### A. Document Creation & Viewing Flow
+```
+User Request (GET /documents/{id})
        │
        ▼
-┌──────────────────────────────────────┐
-│       Spring Security Filters        │  Authentication & Request Interception
-└──────────────────┬───────────────────┘
-                   │
-                   ▼
-┌──────────────────────────────────────┐
-│          Controller Layer            │  HTTP Handling, Validation, DTO Mapping
-└──────────────────┬───────────────────┘
-                   │
-                   ▼
-┌──────────────────────────────────────┐
-│           Service Layer              │  Business Logic, Authorization Checks,
-│                                      │  Transactions, Audit Event Dispatch
-└─────────┬──────────────────┬─────────┘
-          │                  │
-          ▼                  ▼
-┌──────────────────┐  ┌──────────────────┐
-│ Repository Layer │  │ Storage Engine   │  Persistent State &
-│ (Spring Data JPA)│  │ (Private Disk)   │  Secure Blob Management
-└──────────────────┘  └──────────────────┘
+Spring Security ────► Authenticates Principal
+       │
+       ▼
+DocumentController ──► Calls DocumentService.getDocument(id, username)
+       │
+       ▼
+DocumentAuthorizationService ──► Checks Owner OR Active Share (READ/EDIT)
+       │
+       ├─► [Unauthorized / Unshared] ──► Throws ResourceNotFoundException (HTTP 404)
+       │
+       └─► [Authorized] ───────────────► Loads Document & Collaborator List
+                                         │
+                                         ▼
+                             Renders templates/documents/detail.html
+                             (Contextual action controls based on role)
+```
+
+### B. Secure File Upload Flow
+```
+Client POST /api/documents/{id}/file (Multipart file payload + CSRF)
+       │
+       ▼
+Spring Security ────► Validates CSRF Token & Authentication Context
+       │
+       ▼
+DocumentFileUploadController ──► Calls DocumentService.uploadFile(id, file, username)
+       │
+       ▼
+DocumentAuthorizationService ──► Enforces SharePermission.EDIT (Owner or EDIT collaborator)
+       │
+       ▼
+FileValidationService ─────────► Enforces size <= 10 MiB
+                                 Inspects magic bytes (PDF, PNG, JPEG, ZIP)
+                                 Validates UTF-8 encoding & rejects NUL bytes (0x00)
+                                 Validates Zip entries (max 1000 files, 50 MiB, Zip-Slip check)
+                                 Computes SHA-256 digest
+       │
+       ▼
+LocalStorageService ───────────► Stages file atomically in ./private-storage/uploads/{UUID}.bin
+       │
+       ▼
+DocumentRepository ────────────► Updates metadata (filename, content_type, size, checksum, storageKey)
+       │
+       ▼
+AuditService ──────────────────► Records FILE_UPLOAD event (Propagation.REQUIRED)
+       │
+       ▼
+Returns HTTP 200 OK (DocumentDto)
+```
+
+### C. Secure File Download & Verification Flow
+```
+Client GET /api/documents/{id}/file
+       │
+       ▼
+Spring Security ────► Authenticates Principal
+       │
+       ▼
+DocumentFileDownloadController ──► Calls DocumentService.downloadFile(id, username)
+       │
+       ▼
+DocumentAuthorizationService ────► Enforces SharePermission.READ (Owner or any collaborator)
+       │
+       ▼
+LocalStorageService ─────────────► Streams bytes from ./private-storage/uploads/{UUID}.bin
+       │
+       ▼
+FileValidationService ───────────► Calculates streaming SHA-256 digest
+       │
+       ▼
+Integrity Check ─────────────────► MessageDigest.isEqual(computedSha256, document.fileChecksum)
+       │
+       ├─► [MISMATCH] ───────────► Throws StorageException (Fail-Closed, HTTP 500, 0 bytes sent)
+       │
+       └─► [MATCH] ──────────────► AuditService records FILE_DOWNLOAD (Propagation.REQUIRED)
+                                   DocumentController sanitizes Content-Disposition header
+                                   Streams Resource with X-Content-Type-Options: nosniff
 ```
 
 ---
 
-## 2. Component Responsibilities
+## 4. Authentication, Session Management & Security Controls
 
-### A. Controllers (`com.trustvault.controller`)
-- **Primary Role**: Act as the application's presentation and API boundary.
-- **Responsibilities**:
-  - Map HTTP routes (`@GetMapping`, `@PostMapping`, etc.) to handler methods.
-  - Enforce contract-level validation on incoming payloads via `@Valid` and Bean Validation annotations.
-  - Return strongly-typed response envelopes (`ResponseEntity<T>`) with appropriate HTTP status codes (e.g., `200 OK`, `201 Created`).
-  - **Boundaries**: Controllers must **never** interact directly with the database, execute raw business logic, or access disk storage directly. All operations are delegated to services.
+TrustVault implements a hardened session-based authentication model configured in [`SecurityConfig.java`](file:///d:/TrustVault/src/main/java/com/trustvault/security/SecurityConfig.java):
 
-### B. Services (`com.trustvault.service`)
-- **Primary Role**: Orchestrate business logic and manage transactional boundaries.
-- **Responsibilities**:
-  - Enforce application policies and business rules.
-  - Manage database transaction lifecycles using `@Transactional`.
-  - Coordinate data mutations across repositories, private file storage, and audit logging.
-  - Verify that the calling principal possesses the necessary rights before proceeding.
-  - **Boundaries**: Services are decoupled from HTTP constructs (such as `HttpServletRequest` or `HttpServletResponse`).
+### A. Password Security & Form Login
+- Passwords are encrypted using Spring Security's `BCryptPasswordEncoder` configured with work factor 12.
+- Authenticated via standard form login with credentials verified against PostgreSQL `users` table.
+- Development-only credential initialization (`DevUserInitializer`) and one-shot password reset runners (`DevPasswordResetRunner`) require explicit opt-in properties (`TV_DEV_SEED_ENABLED=true`, `TV_DEV_RESET_PASSWORD=true`), run only under the `dev` profile, and never print or log plaintext credentials.
 
-### C. Repositories (`com.trustvault.repository`)
-- **Primary Role**: Provide isolated, secure data persistence abstractions.
-- **Responsibilities**:
-  - Extend Spring Data JPA interfaces (`JpaRepository`, `CrudRepository`).
-  - Use parameterized queries and Spring Data method derivation to completely prevent SQL injection.
-  - Scope queries to authenticated user/tenant contexts where appropriate.
-  - **Boundaries**: Repositories deal solely with entity persistence and querying; they never handle business workflows or file I/O.
+### B. Session Fixation Defense
+- Configured via `.sessionFixation(fixation -> fixation.changeSessionId())`. Upon successful login, Spring Security assigns a new HTTP session ID while migrating existing session attributes, mitigating session fixation attacks.
 
----
+### C. Cross-Site Request Forgery (CSRF) Protection
+- Synchronizer Token Pattern CSRF protection is active globally across all state-mutating HTTP methods (`POST`, `PUT`, `DELETE`).
+- Server-rendered Thymeleaf forms automatically include hidden `_csrf` tokens.
+- REST endpoints accept CSRF tokens via standard form parameters or the `X-CSRF-TOKEN` header.
 
-## 3. Document Authorization Strategy
+### D. Secure Logout Architecture
+- Handled exclusively via `POST /logout` requiring a valid CSRF token.
+- Executed by Spring Security's `SecurityContextLogoutHandler`:
+  - Invalidates the active `HttpSession`.
+  - Clears the thread-local `SecurityContext`.
+  - Expunges the `JSESSIONID` cookie by returning `Set-Cookie: JSESSIONID=; Path=/; Max-Age=0; HttpOnly`.
+  - Redirects the user to `/login?logout`.
+- The shared UI navbar integrates a CSRF-protected POST logout form.
 
-> **Status Notice**: Document-level authorization is **not implemented in Phase 1**. Phase 1 establishes the baseline security foundation (all endpoints require authentication except `/api/health`).
-
-### Planned Design for Phase 2+:
-- **Dual-Layer Access Control**:
-  - **Role-Based Access Control (RBAC)**: Baseline roles (`USER`, `AUDITOR`, `ADMIN`) define coarse operational privileges.
-  - **Attribute-Based / Document-Level Access Control (ABAC)**: Every document will have an explicit ownership and sharing matrix.
-- **Enforcement Point**: Authorization checks must occur **inside the Service layer** (e.g., via `@PreAuthorize("@documentSecurity.canAccess(principal, #documentId)")` or programmatic evaluation) before any metadata is retrieved or file bytes are read.
-- **Denial Pattern**: If a user requests a document they do not have permission to view, the system will return `403 Forbidden` (or `404 Not Found` if metadata disclosure must be prevented).
+### E. Session Tracking & Transaction-Safe Revocation
+- Inbound requests pass through `ConcurrentSessionFilter` using a registered `SessionRegistryImpl`.
+- When an account is deactivated (`UserService.deactivateUser`) or credentials change (`UserService.changePassword`), active sessions are revoked.
+- **Transaction-Safe Hook:** Revocation is scheduled post-commit using `TransactionSynchronizationManager.registerSynchronization` with an `afterCommit()` callback. Sessions are expired only after the database update commits, preventing premature session invalidation if a transaction rolls back.
 
 ---
 
-## 4. Private File Storage Architecture
+## 5. Document Authorization & Access Control (ABAC Model)
 
-### Why Public Static Directories Are Strictly Prohibited
-- In standard web applications, files placed in `src/main/resources/static`, `src/main/resources/public`, or web server document roots can be downloaded by anyone who guesses or discovers the URL, bypassing authentication and authorization entirely.
-- Exposing documents statically creates severe vulnerabilities:
-  - Unauthorized direct access.
-  - Inability to verify user permissions per request.
-  - Inability to record audit access logs on file downloads.
+TrustVault enforces fine-grained Attribute-Based Access Control (ABAC) at the service layer via [`DocumentAuthorizationService`](file:///d:/TrustVault/src/main/java/com/trustvault/service/DocumentAuthorizationService.java).
 
-### TrustVault's Secure Storage Model
-1. **Isolated Filesystem Location**: Uploaded documents are stored outside the web root (configured via `STORAGE_UPLOAD_DIR`, defaulting to `./private-storage/uploads`).
-2. **Identifier Obfuscation**: Files on disk are named using non-predictable UUIDs rather than original user filenames, preventing Directory Traversal attacks (`../../etc/passwd`).
-3. **Controlled Streaming**: Files are retrieved exclusively through an authenticated Spring Boot streaming endpoint that checks authorization, reads the file from private disk, and streams the content with secure HTTP headers (`Content-Disposition: attachment; filename="..."`, `X-Content-Type-Options: nosniff`).
+### A. Access Matrix
 
----
+| Role / Principal | View Metadata | Download File | Edit Metadata | Upload/Replace File | Delete Document | Manage Collaborators |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: |
+| **Document Owner** | Allowed | Allowed | Allowed | Allowed | Allowed | Allowed |
+| **Collaborator (`EDIT`)** | Allowed | Allowed | Allowed | Allowed | **Denied** (403) | **Denied** (403) |
+| **Collaborator (`READ`)** | Allowed | Allowed | **Denied** (403) | **Denied** (403) | **Denied** (403) | **Denied** (403) |
+| **Unshared User** | **Denied** (404) | **Denied** (404) | **Denied** (404) | **Denied** (404) | **Denied** (404) | **Denied** (404) |
+| **Admin (`ROLE_ADMIN`)** | **Denied** (404)* | **Denied** (404)* | **Denied** (404)* | **Denied** (404)* | **Denied** (404)* | **Denied** (404)* |
 
-## 5. Audit Logging Architecture
+*\*Note: Unless explicitly granted an ownership or share record.*
 
-Enterprise security and regulatory compliance require a tamper-resistant record of all sensitive operations.
+### B. Anti-IDOR Information Leakage Reduction
+- If an unshared user requests access to a document (or attempts to view, upload, download, share, or delete it), the service throws `ResourceNotFoundException("Document not found with id: " + documentId)`.
+- Handled by `GlobalExceptionHandler` to return `HTTP 404 Not Found`.
+- **Architectural Rationale:** Returning `404 Not Found` rather than `403 Forbidden` significantly reduces information leakage by preventing unauthorized callers from determining whether an unshared document ID exists on the server.
 
-### Core Audit Principles:
-1. **Non-Bypassable**: Audit event emission is wired into the service layer lifecycle, ensuring events trigger on both successful and unauthorized attempts.
-2. **Structured Event Schema**:
-   - **Timestamp**: UTC timestamp of event occurrence.
-   - **Principal**: Authenticated username/ID of the actor.
-   - **Action**: Discrete verb (`DOCUMENT_UPLOAD`, `DOCUMENT_READ`, `DOCUMENT_SHARE`, `SHARE_REVOKE`, `LOGIN_ATTEMPT`).
-   - **Target Resource**: Identifier of the target entity (e.g., document UUID).
-   - **Client IP & User-Agent**: Network origin of the request.
-   - **Outcome**: `SUCCESS`, `DENIED`, or `ERROR`.
-3. **Immutability**: Audit log records must be append-only with no modification or deletion privileges granted to regular application accounts.
+### C. Admin Zero-Trust Policy
+- As implemented in `DocumentAuthorizationService.authorizeDocument`, administrators (`ROLE_ADMIN`) manage system users but have **no implicit document viewing or editing rights**. Private documents remain private unless the owner explicitly shares them with the administrator.
 
 ---
 
-## 6. Phase 1 Security Baseline Summary
+## 6. Document-Sharing Architecture & Collaboration Workflow
 
-| Security Requirement | Status in Phase 1 | Implementation Mechanism |
-| :--- | :--- | :--- |
-| Spring Security globally enabled | **Active** | `SecurityConfig` requires authentication on `anyRequest()` |
-| Health check accessibility | **Permitted** | Whitelisted `/api/health` without authentication |
-| Protected route enforcement | **Enforced** | Tested via `HealthControllerTest` verifying `401 Unauthorized` |
-| No hardcoded credentials | **Enforced** | All database connection settings read from environment variables |
-| No static document exposure | **Enforced** | No static upload mapping; private storage path configured |
-| Exception sanitization | **Enforced** | `GlobalExceptionHandler` strips stack traces from client responses |
-| Document-level authorization | **Deferred** | Explicitly scoped for subsequent phases |
+Collaborator access is modeled through the `DocumentShare` entity, linking a `Document`, a target `User`, and a `SharePermission` (`READ` or `EDIT`).
+
+```
+┌──────────────────┐         1:N         ┌───────────────────┐        N:1        ┌──────────────────┐
+│     Document     │────────────────────►│   DocumentShare   │◄──────────────────│       User       │
+│ - id             │                     │ - permission      │                   │ - id             │
+│ - owner (User)   │                     │   (READ / EDIT)   │                   │ - username       │
+└──────────────────┘                     └───────────────────┘                   └──────────────────┘
+```
+
+### Collaboration Workflow & Controls:
+1. **Owner-Only Share Management:** All share operations (`grantAccess`, `revokeAccess`, `listShares` in [`DocumentShareService`](file:///d:/TrustVault/src/main/java/com/trustvault/service/DocumentShareService.java)) execute [`DocumentAuthorizationService.authorizeDocumentForOwner`](file:///d:/TrustVault/src/main/java/com/trustvault/service/DocumentAuthorizationService.java#L247). Non-owners are denied immediately.
+2. **REST Endpoints:**
+   - `GET /api/documents/{id}/shares`: Lists current active collaborators (Owner only).
+   - `POST /api/documents/{id}/shares`: Adds or updates a collaborator permission (Owner only). Requires target username and `READ` or `EDIT` permission. Prevents self-sharing.
+   - `DELETE /api/documents/{id}/shares/{targetUsername}`: Revokes collaborator access immediately (Owner only).
+3. **Audit Dispatch:** Every share grant (`DOCUMENT_SHARE_ADD`, `DOCUMENT_SHARE_UPDATE`) and revocation (`DOCUMENT_SHARE_REVOKE`) records principal, target username, permission, and document ID in the audit ledger.
 
 ---
 
-## 7. Session Management & Scalability Limitations
+## 7. Private File Storage & Integrity Verification Subsystem
 
-TrustVault tracks active authenticated user sessions using Spring Security's `SessionRegistry` and `HttpSessionEventPublisher`:
-- **Tracking & Interception**: Authenticated sessions are registered upon login. Inbound requests pass through `ConcurrentSessionFilter`, which checks if a session has been flagged as expired and redirects expired sessions to `/login?expired`.
-- **Transaction-Safe Revocation**: When credentials change (`UserService.changePassword()`), active sessions are expired via Spring's `TransactionSynchronizationManager.afterCommit()`. This guarantees sessions are only invalidated after the database update transaction successfully commits, preventing premature revocation if a transaction rolls back.
+### A. Storage Architecture
+- Files are stored in a dedicated local filesystem directory (`./private-storage/uploads`), kept completely decoupled from web application roots, classpath assets, or static HTTP mappings.
+- Direct filesystem filenames use random UUID nonces (`{storageKey}.bin`). The original user-supplied filename is stored exclusively in the database metadata table.
 
-### Architectural Limitation: In-Memory Session Storage
-- The current implementation configures `SessionRegistryImpl`, which maintains all session tracking state **in-memory within the local JVM heap** (using concurrent hash maps).
-- **Single-Node Monolith Scope**: This design is suited for single-instance monolithic deployments (such as the current hackathon environment).
-- **Horizontal Scalability Limitation**: In a horizontally scaled deployment with multiple application instances behind a load balancer, `SessionRegistryImpl` does not synchronize session state across nodes. A password change processed on Instance A marks sessions expired only within Instance A's JVM memory. Sessions active on Instance B or subsequent requests routed to other instances will not be revoked unless a distributed session repository (such as Spring Session with Redis or a shared database) is introduced. Cross-instance session revocation is **not guaranteed** in a multi-instance cluster under this baseline architecture.
+### B. Upload Validation Pipeline
+[`FileValidationService`](file:///d:/TrustVault/src/main/java/com/trustvault/storage/FileValidationService.java) executes an exhaustive pre-storage validation sequence:
+1. **Size Boundary:** Validates that total bytes do not exceed `10 MiB` (`10_485_760` bytes).
+2. **Magic Byte Inspection:** Inspects byte headers to verify signatures:
+   - PDF: `%PDF-` (`0x25, 0x50, 0x44, 0x46, 0x2D`)
+   - PNG: `0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A`
+   - JPEG: `0xFF, 0xD8, 0xFF`
+   - ZIP: `PK\x03\x04` (`0x50, 0x4B, 0x03, 0x04`)
+3. **Text & Script Validation:** Plaintext documents (`text/plain`, `.txt`, `.csv`, `.md`) are verified for valid UTF-8 encoding and checked for embedded binary NUL bytes (`0x00`), which trigger immediate rejection.
+4. **Zip-Slip & Zip-Bomb Defenses:** Inspects zip headers without fully uncompressing the archive:
+   - Max 1,000 entries.
+   - Max 50 MiB uncompressed size.
+   - Compression ratio limits to reject recursive/oversized zip bombs.
+   - Canonical entry path verification rejecting directory traversal sequences (`../`, Zip-Slip).
+
+### C. Download Integrity Verification (Pre-Stream Fail-Closed)
+- During upload, `FileValidationService.calculateSha256(byte[])` records the hex-encoded digest in `document.file_checksum`.
+- During download, [`DocumentService.downloadFile`](file:///d:/TrustVault/src/main/java/com/trustvault/service/DocumentService.java#L464) streams the file through `FileValidationService.calculateSha256(InputStream)` using fixed 8 KiB buffers before transmitting data to the client.
+- The computed hash is compared to the database checksum using constant-time comparison (`MessageDigest.isEqual`).
+- **Fail-Closed Guarantee:** If the hash mismatches (indicating bitrot or unauthorized file modification on disk), the operation throws a `StorageException`. The response fails with `HTTP 500 Internal Server Error`, and zero file bytes are returned to the client.
+
+---
+
+## 8. Audit Logging Subsystem
+
+Enterprise accountability requires a resilient, tamper-evident record of all security-relevant activity. TrustVault implements this via [`AuditService`](file:///d:/TrustVault/src/main/java/com/trustvault/service/AuditService.java) and the [`AuditEvent`](file:///d:/TrustVault/src/main/java/com/trustvault/entity/AuditEvent.java) entity.
+
+### A. Event Categories & Schema
+Events record:
+- `timestamp`: UTC timestamp.
+- `principal`: Authenticated username (or "ANONYMOUS").
+- `action`: Specific action enum (e.g., `LOGIN_SUCCESS`, `LOGIN_FAILURE`, `SECURITY_DENIAL`, `DOCUMENT_CREATE`, `DOCUMENT_READ`, `FILE_UPLOAD`, `FILE_DOWNLOAD`, `DOCUMENT_SHARE_ADD`, `DOCUMENT_SHARE_REVOKE`, `USER_DEACTIVATED`).
+- `resourceType` and `resourceId`: Target entity classification and ID.
+- `ipAddress` and `userAgent`: Client network origin.
+- `details`: Contextual metadata (e.g., target collaborator username, granted permission). Sensitive fields (passwords, tokens, file bytes) are strictly excluded.
+
+### B. Transactional Propagation Strategy
+- **Standard Business Events (`recordEvent`):** Configured with `@Transactional(propagation = Propagation.REQUIRED)`. Audit logging participates in the caller's business transaction. If the business transaction fails, the uncommitted audit event is rolled back with it, preventing phantom success records.
+- **Security Denial Events (`recordSecurityDenial`):** Configured with `@Transactional(propagation = Propagation.REQUIRES_NEW)`. Denial records run in an autonomous database transaction and commit immediately. Even if the caller's transaction rolls back or throws an exception, the security denial record is permanently retained in the database.
+
+### C. Immutability & Privileged Database Administrator Boundary
+- **Application-Level Immutability:** The `AuditEvent` entity defines `@Column(updatable = false)` across its fields and contains no mutator/setter methods. `AuditEventRepository` exposes only append (`save`) and read methods. Application users, services, and web callers cannot modify or delete existing audit events.
+- **Architectural Boundary (DBA Distinction):** Immutability is enforced at the **application and JPA layer**. It does **not** prevent a privileged PostgreSQL database administrator or an attacker with direct SQL console credentials from modifying or deleting rows in the `audit_events` table. Full non-repudiation against database administrators requires future database-level write-once controls or external cryptographic log forwarders.
+
+---
+
+## 9. Security Posture Summary & Architectural Boundaries
+
+### Implemented & Verified Controls vs. Residual Risks
+
+| Domain | Implemented & Verified Control | Residual Risk / Deployment Limitation | Companion Reference |
+| :--- | :--- | :--- | :--- |
+| **Access Control** | Fine-grained ABAC (Owner, EDIT, READ), Anti-IDOR HTTP 404 handling, Admin Zero-Trust. | HTTP 404 reduces information leakage; subtle timing side-channels remain theoretical. | [`THREATS.md § 4.1, 4.2`](file:///d:/TrustVault/THREATS.md#41-broken-object-level-authorization-bola--idor) |
+| **File Storage** | Isolated private disk, UUID keys, 10 MiB limit, magic bytes, Zip-Slip/Bomb defenses. | No heuristic anti-malware engine (e.g., ClamAV) for valid container formats. | [`THREATS.md § 4.3, 5.3`](file:///d:/TrustVault/THREATS.md#43-malicious-file-uploads--path-traversal) |
+| **File Integrity** | Streaming pre-download SHA-256 validation; constant-time comparison; fail-closed HTTP 500. | Storage files are unencrypted at rest; file security relies on host OS ACLs. | [`THREATS.md § 4.4, 5.4`](file:///d:/TrustVault/THREATS.md#44-file-tampering--integrity-degradation) |
+| **Sessions** | BCrypt work factor 12, `changeSessionId` fixation defense, CSRF-protected POST logout. | `SessionRegistryImpl` stores sessions in JVM heap; multi-node clusters require Spring Session Redis. | [`THREATS.md § 4.5, 5.2`](file:///d:/TrustVault/THREATS.md#45-authentication--session-attacks) |
+| **Rate Limiting** | Strict file size and zip decompression boundaries prevent single-request memory exhaustion. | No application-level rate limiting on `/login` or API routes; requires upstream reverse proxy. | [`THREATS.md § 4.10, 5.1`](file:///d:/TrustVault/THREATS.md#410-denial-of-service-dos) |
+| **Audit Trails** | Autonomous `REQUIRES_NEW` denial logging, JPA entity immutability (`updatable=false`). | Immutability is at application layer; does not restrict a privileged PostgreSQL DBA. | [`THREATS.md § 4.7, 5`](file:///d:/TrustVault/THREATS.md#47-audit-log-tampering--evasion) |
+| **Error Handling** | Centralized `GlobalExceptionHandler` strips stack traces and internal paths into sanitized DTOs. | Minimal residual risk; uniform error envelopes applied across all routes. | [`THREATS.md § 4.8`](file:///d:/TrustVault/THREATS.md#48-sensitive-information-disclosure) |
+
+---
+
+## 10. Verification & Test Evidence
+
+The architectural controls described in this blueprint are validated by an automated test suite comprising **331 tests** with 0 failures:
+- **Authorization & Anti-IDOR:** `DocumentAuthorizationTest`, `DocumentFileUploadServiceTest`
+- **Sharing & Permission Enforcement:** `DocumentShareRestControllerTest`
+- **File Validation & Safety:** `FileValidationServiceTest` (50 tests), `LocalStorageServiceTest` (23 tests)
+- **Upload & Download Operations:** `DocumentFileUploadControllerTest`, `DocumentFileDownloadControllerTest` (14 tests)
+- **Authentication, Logout & Session Management:** `AuthenticationIntegrationTest`, `LogoutIntegrationTest`, `UserServiceSessionInvalidationTest`
+- **Audit Logging & Transaction Propagation:** `BusinessAuditIntegrationTest`, `AuditEventPersistenceTest`
+- **Error Sanitization:** `GlobalExceptionHandlerTest`

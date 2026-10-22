@@ -186,6 +186,59 @@ public class UserService {
     }
 
     /**
+     * Resets a development user's password in place using BCrypt (strength 12),
+     * revoking all active sessions post-commit, and emitting an audit event.
+     *
+     * Security Invariants & In-Place Mutation:
+     * - Strictly restricted to username 'devuser'. Rejects any other username.
+     * - Updates only the password hash; preserves id, role, email, enabled status, and createdAt.
+     * - Requires minimum 8 characters; never prints or logs the raw password or password hash.
+     * - Emits structured AuditAction.PASSWORD_CHANGE within the same transaction.
+     * - Revokes active sessions post-commit via scheduleSessionRevocationAfterCommit.
+     *
+     * @param username       Username of the development account (must be 'devuser')
+     * @param rawNewPassword The new plaintext password to hash and set (min 8 characters, never logged)
+     * @throws IllegalArgumentException if user is not found, username is not 'devuser', or password is invalid
+     */
+    public void resetDevUserPassword(String username, String rawNewPassword) {
+        Objects.requireNonNull(username, "Username must not be null");
+        Objects.requireNonNull(rawNewPassword, "Password must not be null");
+
+        String trimmedUsername = username.trim();
+        if (!"devuser".equals(trimmedUsername)) {
+            throw new IllegalArgumentException("Development password reset is restricted exclusively to 'devuser'");
+        }
+
+        if (rawNewPassword.isBlank() || rawNewPassword.length() < 8) {
+            throw new IllegalArgumentException("Password must be at least 8 characters");
+        }
+
+        User user = userRepository.findByUsername(trimmedUsername)
+                .orElseThrow(() -> new IllegalArgumentException("User not found: " + trimmedUsername));
+
+        String hashedPassword = passwordEncoder.encode(rawNewPassword);
+        user.setPassword(hashedPassword);
+        userRepository.save(user);
+
+        if (auditService != null) {
+            auditService.recordSuccess(
+                    AuditAction.PASSWORD_CHANGE,
+                    user.getUsername(),
+                    null,
+                    null,
+                    null,
+                    null,
+                    null
+            );
+        }
+
+        // Security Policy: Invalidate all active sessions for this user ONLY after the password update transaction successfully commits
+        scheduleSessionRevocationAfterCommit(user.getUsername());
+
+        log.info("Password successfully reset for development user '{}'", user.getUsername());
+    }
+
+    /**
      * Deactivates an existing user account and revokes all active sessions post-commit.
      *
      * @param username Username of the account to deactivate

@@ -1,0 +1,366 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments/head :: head(title=${pageTitle})}">
+</head>
+<body class="app-shell">
+
+  <!-- Accessible Skip Link -->
+  <a href="#main-content" class="skip-link">Skip to main content</a>
+
+  <!-- Top Navigation Header -->
+  <header th:replace="~{fragments/navbar :: navbar}"></header>
+
+  <!-- App Container (Sidebar + Main Content) -->
+  <div class="app-container">
+    <aside th:replace="~{fragments/sidebar :: sidebar(activeTab=${activeTab})}"></aside>
+
+    <main id="main-content" class="app-main" role="main">
+
+      <!-- Flash Success Message Alert -->
+      <div th:if="${successMessage != null}" class="alert alert-success" role="alert" id="dashboard-success-alert">
+        <svg class="alert-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+          <polyline points="22 4 12 14.01 9 11.01"></polyline>
+        </svg>
+        <div class="alert-content">
+          <div class="alert-title">Success</div>
+          <div class="alert-message" th:text="${successMessage}">Document created successfully.</div>
+        </div>
+      </div>
+
+      <!-- Dashboard Header -->
+      <div class="dashboard-toolbar">
+        <div>
+          <h1 style="font-size: var(--text-2xl); font-weight: 700; letter-spacing: -0.025em; margin: 0 0 4px 0; color: var(--text-primary);">
+            Documents
+          </h1>
+          <p style="font-size: var(--text-sm); color: var(--text-secondary); margin: 0;">
+            Securely manage, organize, and monitor your protected enterprise documents.
+          </p>
+        </div>
+
+        <div>
+          <button type="button" class="btn btn-primary" id="open-create-doc-modal-btn" onclick="openCreateModal()">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="12" y1="5" x2="12" y2="19"></line>
+              <line x1="5" y1="12" x2="19" y2="12"></line>
+            </svg>
+            <span>New Document</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Metrics Summary Cards -->
+      <div class="metrics-grid">
+        <div class="metric-card">
+          <div class="metric-title">Accessible Documents</div>
+          <div class="metric-number" id="metric-total-docs" th:text="${totalCount}">0</div>
+          <div class="metric-sub">Total documents available to your account</div>
+        </div>
+
+        <div class="metric-card">
+          <div class="metric-title">Owned Documents</div>
+          <div class="metric-number" id="metric-owned-docs" th:text="${ownedCount}">0</div>
+          <div class="metric-sub">Documents created and managed by you</div>
+        </div>
+
+        <div class="metric-card">
+          <div class="metric-title">Shared With You</div>
+          <div class="metric-number" id="metric-shared-docs" th:text="${sharedCount}">0</div>
+          <div class="metric-sub">Shared by other authorized colleagues</div>
+        </div>
+      </div>
+
+      <!-- Filter Tabs Navigation -->
+      <div class="dashboard-toolbar" style="margin-bottom: var(--space-4);">
+        <nav class="tab-nav" aria-label="Document view filter">
+          <a th:href="@{/documents}" class="tab-link" th:classappend="${activeFilter == 'all' ? 'active' : ''}">
+            <span>All Documents</span>
+            <span class="tab-pill" th:text="${totalCount}">0</span>
+          </a>
+          <a th:href="@{/documents(filter='owned')}" class="tab-link" th:classappend="${activeFilter == 'owned' ? 'active' : ''}">
+            <span>My Documents</span>
+            <span class="tab-pill" th:text="${ownedCount}">0</span>
+          </a>
+          <a th:href="@{/documents(filter='shared')}" class="tab-link" th:classappend="${activeFilter == 'shared' ? 'active' : ''}">
+            <span>Shared with Me</span>
+            <span class="tab-pill" th:text="${sharedCount}">0</span>
+          </a>
+        </nav>
+      </div>
+
+      <!-- Search & Date Filter Bar -->
+      <div class="table-card" style="margin-bottom: var(--space-4); padding: var(--space-3) var(--space-4);">
+        <form method="get" th:action="@{/documents}" class="filter-form" style="display: flex; flex-wrap: wrap; gap: var(--space-3); align-items: flex-end;">
+          <input type="hidden" name="filter" th:value="${activeFilter}" />
+
+          <!-- Search Query (Title/Description) -->
+          <div style="flex: 2; min-width: 200px;">
+            <label for="search-query-input" style="display: block; font-size: var(--text-xs); font-weight: 500; color: var(--text-secondary); margin-bottom: 4px;">Search Documents</label>
+            <input type="text"
+                   id="search-query-input"
+                   name="q"
+                   th:value="${searchQuery}"
+                   class="form-control"
+                   style="font-size: var(--text-xs); padding: var(--space-2) var(--space-3);"
+                   placeholder="Search by title or description..." />
+          </div>
+
+          <!-- Owner Filter -->
+          <div style="flex: 1; min-width: 140px;">
+            <label for="search-owner-input" style="display: block; font-size: var(--text-xs); font-weight: 500; color: var(--text-secondary); margin-bottom: 4px;">Owner</label>
+            <input type="text"
+                   id="search-owner-input"
+                   name="owner"
+                   th:value="${ownerFilter}"
+                   class="form-control"
+                   style="font-size: var(--text-xs); padding: var(--space-2) var(--space-3);"
+                   placeholder="Owner username" />
+          </div>
+
+          <!-- From Date Filter -->
+          <div style="min-width: 130px;">
+            <label for="search-from-date" style="display: block; font-size: var(--text-xs); font-weight: 500; color: var(--text-secondary); margin-bottom: 4px;">From Date</label>
+            <input type="date"
+                   id="search-from-date"
+                   name="fromDate"
+                   th:value="${fromDate != null ? #temporals.format(fromDate, 'yyyy-MM-dd') : ''}"
+                   class="form-control"
+                   style="font-size: var(--text-xs); padding: var(--space-2) var(--space-3);" />
+          </div>
+
+          <!-- To Date Filter -->
+          <div style="min-width: 130px;">
+            <label for="search-to-date" style="display: block; font-size: var(--text-xs); font-weight: 500; color: var(--text-secondary); margin-bottom: 4px;">To Date</label>
+            <input type="date"
+                   id="search-to-date"
+                   name="toDate"
+                   th:value="${toDate != null ? #temporals.format(toDate, 'yyyy-MM-dd') : ''}"
+                   class="form-control"
+                   style="font-size: var(--text-xs); padding: var(--space-2) var(--space-3);" />
+          </div>
+
+          <!-- Filter and Reset Actions -->
+          <div style="display: flex; gap: var(--space-2); align-items: center;">
+            <button type="submit" class="btn btn-secondary" id="search-filter-btn" style="font-size: var(--text-xs); padding: var(--space-2) var(--space-3);">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="11" cy="11" r="8"></circle>
+                <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+              </svg>
+              <span>Filter</span>
+            </button>
+            <a th:if="${(searchQuery != null and !searchQuery.isEmpty()) or (ownerFilter != null and !ownerFilter.isEmpty()) or fromDate != null or toDate != null}"
+               th:href="@{/documents(filter=${activeFilter})}"
+               class="btn btn-ghost"
+               id="search-reset-btn"
+               style="font-size: var(--text-xs); padding: var(--space-2) var(--space-3); color: var(--text-secondary);">
+              <span>Clear</span>
+            </a>
+          </div>
+        </form>
+      </div>
+      <div class="table-card">
+        <!-- Empty State View -->
+        <div th:if="${documents == null or documents.isEmpty()}" class="empty-state" id="documents-empty-state">
+          <div class="empty-state-icon">
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+              <polyline points="14 2 14 8 20 8"></polyline>
+              <line x1="12" y1="18" x2="12" y2="12"></line>
+              <line x1="9" y1="15" x2="15" y2="15"></line>
+            </svg>
+          </div>
+          <h2 class="empty-state-title">No documents found</h2>
+          <p class="empty-state-desc">
+            <span th:if="${activeFilter == 'owned'}">You have not created any documents yet. Click "Create Document" to begin storing your files securely.</span>
+            <span th:if="${activeFilter == 'shared'}">No documents have been shared with your account yet. When colleagues grant you access, they will appear here.</span>
+            <span th:if="${activeFilter == 'all'}">Your vault is currently empty. Create your first document to store metadata and attach private files.</span>
+          </p>
+          <button type="button" class="btn btn-primary" onclick="openCreateModal()">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="12" y1="5" x2="12" y2="19"></line>
+              <line x1="5" y1="12" x2="19" y2="12"></line>
+            </svg>
+            <span>Create First Document</span>
+          </button>
+        </div>
+
+        <!-- Document List Table -->
+        <div th:if="${documents != null and !documents.isEmpty()}" class="table-responsive">
+          <table class="data-table" id="documents-table" aria-label="Accessible Documents List">
+            <thead>
+              <tr>
+                <th scope="col" style="min-width: 240px;">Document</th>
+                <th scope="col">Role / Permission</th>
+                <th scope="col">Attached File</th>
+                <th scope="col">Owner</th>
+                <th scope="col">Last Modified</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr th:each="doc : ${documents}" th:id="'doc-row-' + ${doc.id}">
+                <!-- Title & Description -->
+                <td>
+                  <div class="doc-title-cell">
+                    <a th:href="@{/documents/{id}(id=${doc.id})}" class="doc-title-link" th:text="${doc.title}">Document Title</a>
+                    <span th:if="${doc.description != null}" class="doc-desc" th:text="${doc.description}">Document description</span>
+                  </div>
+                </td>
+
+                <!-- Ownership / Permission Badge -->
+                <td>
+                  <span th:if="${doc.isOwner}" class="badge badge-accent">OWNER</span>
+                  <span th:if="${!doc.isOwner and doc.permissionLabel == 'EDIT'}" class="badge" style="background-color: var(--color-info-subtle); color: var(--color-info-text); border: 1px solid var(--color-info-border);">EDIT</span>
+                  <span th:if="${!doc.isOwner and doc.permissionLabel == 'READ'}" class="badge badge-muted">READ</span>
+                </td>
+
+                <!-- File Attachment Status -->
+                <td>
+                  <span th:if="${doc.hasFile}" class="file-status-badge has-file" th:title="'Attached: ' + ${doc.fileOriginalName}">
+                    <svg class="file-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"></path>
+                      <polyline points="13 2 13 9 20 9"></polyline>
+                    </svg>
+                    <span th:text="${doc.fileOriginalName}">file.pdf</span>
+                    <span th:if="${doc.formattedFileSize != null}" style="opacity: 0.8; font-family: var(--font-mono); font-size: 0.7rem;" th:text="'(' + ${doc.formattedFileSize} + ')'">(1.2 MB)</span>
+                  </span>
+
+                  <span th:if="${!doc.hasFile}" class="file-status-badge" style="color: var(--text-muted);">
+                    <svg class="file-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <line x1="5" y1="12" x2="19" y2="12"></line>
+                    </svg>
+                    <span>No file attached</span>
+                  </span>
+                </td>
+
+                <!-- Owner Username -->
+                <td>
+                  <span th:text="${doc.ownerUsername}" style="font-weight: 500; font-size: var(--text-xs); color: var(--text-secondary);">owner</span>
+                </td>
+
+                <!-- Last Modified Timestamp -->
+                <td>
+                  <span class="timestamp-text" th:text="${doc.updatedAt != null ? #temporals.format(doc.updatedAt, 'yyyy-MM-dd HH:mm') : '-'}">2026-10-22 00:00</span>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+    </main>
+  </div>
+
+  <!-- Create Document Modal Dialog -->
+  <div class="modal-backdrop" id="create-doc-modal-backdrop" th:classappend="${modalOpen == true ? 'show' : ''}" role="dialog" aria-modal="true" aria-labelledby="create-modal-title">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <h2 class="modal-title" id="create-modal-title">Create New Document</h2>
+        <button type="button" class="modal-close-btn" onclick="closeCreateModal()" aria-label="Close dialog">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+          </svg>
+        </button>
+      </div>
+
+      <form th:action="@{/documents}" th:object="${createDocumentForm}" method="post" id="create-document-form">
+        <!-- CSRF Token -->
+        <input type="hidden" th:name="${_csrf?.parameterName}" th:value="${_csrf?.token}"/>
+        <input type="hidden" name="filter" th:value="${activeFilter}"/>
+
+        <div class="modal-body">
+          <!-- Global form errors (if service rejected) -->
+          <div th:if="${#fields.hasGlobalErrors()}" class="alert alert-danger" role="alert" style="margin-bottom: var(--space-4);">
+            <svg class="alert-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="10"></circle>
+              <line x1="12" y1="8" x2="12" y2="12"></line>
+              <line x1="12" y1="16" x2="12.01" y2="16"></line>
+            </svg>
+            <div class="alert-content">
+              <div th:each="err : ${#fields.globalErrors()}" th:text="${err}">Error</div>
+            </div>
+          </div>
+
+          <!-- Title Field -->
+          <div class="form-group">
+            <label for="create-doc-title" class="form-label">
+              Document Title <span style="color: var(--color-danger);">*</span>
+            </label>
+            <input type="text"
+                   id="create-doc-title"
+                   th:field="*{title}"
+                   class="form-control"
+                   placeholder="e.g. Q4 Financial Audit Report"
+                   maxlength="255"
+                   required
+                   autofocus>
+            <div th:if="${#fields.hasErrors('title')}" class="form-hint" style="color: var(--color-danger);" th:errors="*{title}">
+              Title error
+            </div>
+            <div class="form-hint">Required. Maximum 255 characters.</div>
+          </div>
+
+          <!-- Description Field -->
+          <div class="form-group">
+            <label for="create-doc-desc" class="form-label">Description (Optional)</label>
+            <textarea id="create-doc-desc"
+                      th:field="*{description}"
+                      class="form-control"
+                      rows="3"
+                      placeholder="Brief summary or context regarding this document"
+                      maxlength="1000"></textarea>
+            <div th:if="${#fields.hasErrors('description')}" class="form-hint" style="color: var(--color-danger);" th:errors="*{description}">
+              Description error
+            </div>
+            <div class="form-hint">Optional. Maximum 1000 characters.</div>
+          </div>
+        </div>
+
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" onclick="closeCreateModal()">Cancel</button>
+          <button type="submit" class="btn btn-primary" id="submit-create-doc-btn">
+            <span>Create Document</span>
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal Interactivity Script -->
+  <script>
+    function openCreateModal() {
+      var modal = document.getElementById('create-doc-modal-backdrop');
+      if (modal) {
+        modal.classList.add('show');
+        var input = document.getElementById('create-doc-title');
+        if (input) {
+          setTimeout(function() { input.focus(); }, 50);
+        }
+      }
+    }
+
+    function closeCreateModal() {
+      var modal = document.getElementById('create-doc-modal-backdrop');
+      if (modal) {
+        modal.classList.remove('show');
+      }
+    }
+
+    // Close on escape key
+    document.addEventListener('keydown', function(e) {
+      if (e.key === 'Escape') {
+        closeCreateModal();
+      }
+    });
+
+    // Close when clicking directly on backdrop
+    document.getElementById('create-doc-modal-backdrop')?.addEventListener('click', function(e) {
+      if (e.target === this) {
+        closeCreateModal();
+      }
+    });
+  </script>
+
+</body>
+</html>

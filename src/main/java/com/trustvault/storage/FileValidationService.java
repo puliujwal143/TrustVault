@@ -479,11 +479,44 @@ public class FileValidationService {
     /**
      * Calculates the SHA-256 digest formatted as 64 lowercase hexadecimal characters.
      */
-    private String calculateSha256(byte[] content) {
+    public String calculateSha256(byte[] content) {
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
             byte[] hash = digest.digest(content);
             return HexFormat.of().formatHex(hash);
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 algorithm must be available in standard JVM", e);
+        }
+    }
+
+    /**
+     * Calculates the SHA-256 digest of an input stream formatted as 64 lowercase hexadecimal characters.
+     * Enforces bounded byte consumption up to MAX_FILE_SIZE_BYTES to prevent memory/resource exhaustion.
+     *
+     * @param inputStream data stream to hash
+     * @return 64-character lowercase hexadecimal SHA-256 digest
+     * @throws IOException if stream reading fails
+     * @throws FileValidationException if the payload exceeds MAX_FILE_SIZE_BYTES
+     */
+    public String calculateSha256(InputStream inputStream) throws IOException {
+        Objects.requireNonNull(inputStream, "InputStream must not be null");
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] buffer = new byte[8192];
+            long bytesReadTotal = 0;
+            int bytesRead;
+            while ((bytesRead = inputStream.read(buffer)) != -1) {
+                bytesReadTotal += bytesRead;
+                if (bytesReadTotal > MAX_FILE_SIZE_BYTES) {
+                    throw new FileValidationException(String.format(
+                            Locale.ROOT,
+                            "File payload exceeds maximum permitted size limit of %d bytes",
+                            MAX_FILE_SIZE_BYTES
+                    ));
+                }
+                digest.update(buffer, 0, bytesRead);
+            }
+            return HexFormat.of().formatHex(digest.digest());
         } catch (NoSuchAlgorithmException e) {
             throw new IllegalStateException("SHA-256 algorithm must be available in standard JVM", e);
         }

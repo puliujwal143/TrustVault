@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<body>
+
+<!-- Danger / Error Alert -->
+<div th:fragment="danger(title, message)" class="alert alert-danger" role="alert">
+  <svg class="alert-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="12" cy="12" r="10"></circle>
+    <line x1="12" y1="8" x2="12" y2="12"></line>
+    <line x1="12" y1="16" x2="12.01" y2="16"></line>
+  </svg>
+  <div class="alert-content">
+    <div class="alert-title" th:if="${title != null}" th:text="${title}">Error</div>
+    <div class="alert-message" th:text="${message}">An error occurred.</div>
+  </div>
+</div>
+
+<!-- Warning Alert -->
+<div th:fragment="warning(title, message)" class="alert alert-warning" role="alert">
+  <svg class="alert-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+    <line x1="12" y1="9" x2="12" y2="13"></line>
+    <line x1="12" y1="17" x2="12.01" y2="17"></line>
+  </svg>
+  <div class="alert-content">
+    <div class="alert-title" th:if="${title != null}" th:text="${title}">Warning</div>
+    <div class="alert-message" th:text="${message}">A warning occurred.</div>
+  </div>
+</div>
+
+<!-- Success Alert -->
+<div th:fragment="success(title, message)" class="alert alert-success" role="alert">
+  <svg class="alert-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+    <polyline points="22 4 12 14.01 9 11.01"></polyline>
+  </svg>
+  <div class="alert-content">
+    <div class="alert-title" th:if="${title != null}" th:text="${title}">Success</div>
+    <div class="alert-message" th:text="${message}">Action completed successfully.</div>
+  </div>
+</div>
+
+<!-- Info Alert -->
+<div th:fragment="info(title, message)" class="alert alert-info" role="alert">
+  <svg class="alert-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="12" cy="12" r="10"></circle>
+    <line x1="12" y1="16" x2="12" y2="12"></line>
+    <line x1="12" y1="8" x2="12.01" y2="8"></line>
+  </svg>
+  <div class="alert-content">
+    <div class="alert-title" th:if="${title != null}" th:text="${title}">Information</div>
+    <div class="alert-message" th:text="${message}">Information notice.</div>
+  </div>
+</div>
+
+</body>
+</html>

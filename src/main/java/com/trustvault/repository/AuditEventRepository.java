@@ -105,9 +105,44 @@ public interface AuditEventRepository extends Repository<AuditEvent, Long> {
     Page<AuditEvent> findAll(Pageable pageable);
 
     /**
+     * Retrieves a paginated slice of audit events executed by a specific actor username,
+     * ordered chronologically descending.
+     *
+     * @param actorUsername the username of the actor
+     * @param pageable      pagination parameters
+     * @return page of audit events
+     */
+    Page<AuditEvent> findByActorUsernameOrderByTimestampDesc(String actorUsername, Pageable pageable);
+
+    /**
      * Returns the total count of recorded audit events.
      *
      * @return total event count
      */
     long count();
+
+    /**
+     * Returns the total count of recorded audit events for a specific actor username.
+     *
+     * @param actorUsername the username of the actor
+     * @return total event count for the actor
+     */
+    long countByActorUsername(String actorUsername);
+
+    /**
+     * Returns the total count of recorded audit events for a specific outcome.
+     *
+     * @param outcome the outcome status
+     * @return total event count for the outcome
+     */
+    long countByOutcome(AuditOutcome outcome);
+
+    /**
+     * Returns the total count of recorded audit events for a specific actor and outcome.
+     *
+     * @param actorUsername the username of the actor
+     * @param outcome       the outcome status
+     * @return total event count for the actor and outcome
+     */
+    long countByActorUsernameAndOutcome(String actorUsername, AuditOutcome outcome);
 }

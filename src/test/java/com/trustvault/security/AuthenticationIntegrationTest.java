@@ -274,9 +274,9 @@ class AuthenticationIntegrationTest {
         assertThat(session).isNotNull();
 
         // Request before password change using the active session passes authentication filter
-        // (Returns 404 because /api/documents has no controller mapping, confirming authentication succeeded)
+        // (Returns 200 OK because /api/documents is mapped, confirming authentication succeeded)
         mockMvc.perform(get("/api/documents").session(session))
-                .andExpect(status().isNotFound());
+                .andExpect(status().isOk());
 
         // Change password, which triggers revocation of all active sessions for 'jack'
         userService.changePassword("jack", "OldPassword123!", "NewPassword123!");
@@ -308,14 +308,14 @@ class AuthenticationIntegrationTest {
         assertThat(sessionA.getId()).isNotEqualTo(sessionB.getId());
 
         // Both sessions are initially valid
-        mockMvc.perform(get("/api/documents").session(sessionA)).andExpect(status().isNotFound());
-        mockMvc.perform(get("/api/documents").session(sessionB)).andExpect(status().isNotFound());
+        mockMvc.perform(get("/api/documents").session(sessionA)).andExpect(status().isOk());
+        mockMvc.perform(get("/api/documents").session(sessionB)).andExpect(status().isOk());
 
         // Selectively revoke other sessions while preserving session A
         userService.revokeOtherUserSessions("karen", sessionA.getId());
 
         // Session A remains valid
-        mockMvc.perform(get("/api/documents").session(sessionA)).andExpect(status().isNotFound());
+        mockMvc.perform(get("/api/documents").session(sessionA)).andExpect(status().isOk());
 
         // Session B is expired and redirected to /login?expired
         mockMvc.perform(get("/api/documents").session(sessionB))
@@ -381,7 +381,7 @@ class AuthenticationIntegrationTest {
 
         // Verify session is active and functional before password change
         mockMvc.perform(get("/api/documents").session(session))
-                .andExpect(status().isNotFound());
+                .andExpect(status().isOk());
 
         // Execute changePassword within a transaction that rolls back
         TransactionTemplate transactionTemplate = new TransactionTemplate(transactionManager);
@@ -399,7 +399,7 @@ class AuthenticationIntegrationTest {
         // Session state: because transaction rolled back, afterCommit was not called,
         // so the active session must NOT have been revoked and remains valid
         mockMvc.perform(get("/api/documents").session(session))
-                .andExpect(status().isNotFound());
+                .andExpect(status().isOk());
     }
 
     @Test
@@ -417,7 +417,7 @@ class AuthenticationIntegrationTest {
 
         // Verify session is active before password change
         mockMvc.perform(get("/api/documents").session(session))
-                .andExpect(status().isNotFound());
+                .andExpect(status().isOk());
 
         // Direct call to an unproxied UserService instance where transaction synchronization is inactive
         UserService directService = new UserService(userRepository, passwordEncoder, sessionRegistry);
@@ -469,9 +469,9 @@ class AuthenticationIntegrationTest {
         MockHttpSession session = (MockHttpSession) loginResult.getRequest().getSession(false);
         assertThat(session).isNotNull();
 
-        // Request before deactivation using active session passes authentication filter (returns 404 for missing controller)
+        // Request before deactivation using active session passes authentication filter
         mockMvc.perform(get("/api/documents").session(session))
-                .andExpect(status().isNotFound());
+                .andExpect(status().isOk());
 
         // Deactivate user, which must trigger session revocation after commit
         userService.deactivateUser("sam");
@@ -499,7 +499,7 @@ class AuthenticationIntegrationTest {
 
         // Verify session is active before deactivation
         mockMvc.perform(get("/api/documents").session(session))
-                .andExpect(status().isNotFound());
+                .andExpect(status().isOk());
 
         // Execute deactivateUser within a transaction that rolls back
         TransactionTemplate transactionTemplate = new TransactionTemplate(transactionManager);
@@ -515,6 +515,6 @@ class AuthenticationIntegrationTest {
 
         // Session must NOT have been revoked because transaction rolled back
         mockMvc.perform(get("/api/documents").session(session))
-                .andExpect(status().isNotFound());
+                .andExpect(status().isOk());
     }
 }

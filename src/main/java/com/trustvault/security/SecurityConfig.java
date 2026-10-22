@@ -8,6 +8,7 @@ import org.springframework.security.config.annotation.web.configuration.EnableWe
 import org.springframework.security.core.session.SessionRegistry;
 import org.springframework.security.core.session.SessionRegistryImpl;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.authentication.logout.SimpleUrlLogoutSuccessHandler;
 import org.springframework.security.web.session.HttpSessionEventPublisher;
 
 /**
@@ -54,15 +55,27 @@ public class SecurityConfig {
 
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http, SessionRegistry sessionRegistry) throws Exception {
+        SimpleUrlLogoutSuccessHandler logoutSuccessHandler = new SimpleUrlLogoutSuccessHandler();
+        logoutSuccessHandler.setDefaultTargetUrl("/login?logout");
+
         http
             .authorizeHttpRequests(authorize -> authorize
                 // Publicly accessible health check probe
                 .requestMatchers("/api/health").permitAll()
+                // Error dispatch endpoint must be permitted to prevent masking error conditions with 403 Forbidden
+                .requestMatchers("/error").permitAll()
+                // Static web assets required for styled UI rendering
+                .requestMatchers("/css/**", "/js/**", "/images/**", "/favicon.ico").permitAll()
+                // Custom login page view route
+                .requestMatchers("/login").permitAll()
                 // All other endpoints require authentication
                 .anyRequest().authenticated()
             )
             .userDetailsService(userDetailsService)
-            .formLogin(Customizer.withDefaults())
+            .formLogin(form -> form
+                .loginPage("/login")
+                .permitAll()
+            )
             .httpBasic(Customizer.withDefaults())
             .sessionManagement(session -> session
                 // Defends against session fixation by replacing the session ID upon authentication
@@ -74,7 +87,10 @@ public class SecurityConfig {
             )
             .logout(logout -> logout
                 .logoutUrl("/logout")
-                .logoutSuccessUrl("/login?logout")
+                .logoutSuccessHandler(logoutSuccessHandler)
+                .invalidateHttpSession(true)
+                .clearAuthentication(true)
+                .deleteCookies("JSESSIONID")
                 .permitAll()
             );
 

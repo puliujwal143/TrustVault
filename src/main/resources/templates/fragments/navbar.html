@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" xmlns:sec="http://www.thymeleaf.org/extras/spring-security">
+<body>
+
+<header th:fragment="navbar" class="app-navbar" role="banner">
+  <div class="navbar-inner">
+    <!-- Brand / Logo -->
+    <div class="navbar-brand-group">
+      <button type="button" class="mobile-nav-toggle" id="mobile-sidebar-toggle" aria-label="Toggle navigation menu" onclick="document.querySelector('.app-sidebar')?.classList.toggle('sidebar-open')">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="3" y1="12" x2="21" y2="12"></line>
+          <line x1="3" y1="6" x2="21" y2="6"></line>
+          <line x1="3" y1="18" x2="21" y2="18"></line>
+        </svg>
+      </button>
+
+      <a th:href="@{/}" class="navbar-brand">
+        <img th:src="@{/images/logo.svg}" alt="TrustVault Shield" class="brand-logo-img">
+        <span class="brand-text">TrustVault</span>
+        <span class="brand-badge">SECURE</span>
+      </a>
+    </div>
+
+    <!-- Actions: Theme Selector & User Profile -->
+    <div class="navbar-actions">
+      <!-- Accessible Theme Selector (Light, Dark, System) -->
+      <div class="theme-selector" role="radiogroup" aria-label="Appearance preference">
+        <button type="button" class="theme-opt-btn" data-theme-value="light" role="radio" aria-checked="false" title="Light appearance">
+          <svg class="theme-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="5"></circle>
+            <line x1="12" y1="1" x2="12" y2="3"></line>
+            <line x1="12" y1="21" x2="12" y2="23"></line>
+            <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+            <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+            <line x1="1" y1="12" x2="3" y2="12"></line>
+            <line x1="21" y1="12" x2="23" y2="12"></line>
+            <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+            <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+          </svg>
+          <span>Light</span>
+        </button>
+
+        <button type="button" class="theme-opt-btn" data-theme-value="dark" role="radio" aria-checked="false" title="Dark appearance">
+          <svg class="theme-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
+          </svg>
+          <span>Dark</span>
+        </button>
+
+        <button type="button" class="theme-opt-btn" data-theme-value="system" role="radio" aria-checked="true" title="Follow operating system preference">
+          <svg class="theme-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
+            <line x1="8" y1="21" x2="16" y2="21"></line>
+            <line x1="12" y1="17" x2="12" y2="21"></line>
+          </svg>
+          <span>System</span>
+        </button>
+      </div>
+
+      <!-- Authenticated User Profile Badge & Logout -->
+      <div sec:authorize="isAuthenticated()" class="user-profile-badge" id="navbar-user-profile">
+        <span class="user-avatar" th:text="${#authentication != null and #authentication.name != null and !#authentication.name.isEmpty() ? #strings.substring(#authentication.name, 0, 1).toUpperCase() : 'U'}">U</span>
+        <span class="user-name-text" id="navbar-username" sec:authentication="name">Username</span>
+
+        <form th:action="@{/logout}" method="post" id="logout-form" style="margin: 0; display: inline-flex; align-items: center;">
+          <input type="hidden" th:if="${_csrf != null}" th:name="${_csrf.parameterName}" th:value="${_csrf.token}"/>
+          <button type="submit" class="btn btn-secondary btn-sm" id="logout-btn" title="Sign out of TrustVault">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
+              <polyline points="16 17 21 12 16 7"></polyline>
+              <line x1="21" y1="12" x2="9" y2="12"></line>
+            </svg>
+            <span>Logout</span>
+          </button>
+        </form>
+      </div>
+    </div>
+  </div>
+</header>
+
+</body>
+</html>

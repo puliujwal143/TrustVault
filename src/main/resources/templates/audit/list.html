@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments/head :: head(title=${pageTitle})}">
+</head>
+<body class="app-shell">
+
+  <!-- Accessible Skip Link -->
+  <a href="#main-content" class="skip-link">Skip to main content</a>
+
+  <!-- Top Navigation Header -->
+  <header th:replace="~{fragments/navbar :: navbar}"></header>
+
+  <!-- App Container (Sidebar + Main Content) -->
+  <div class="app-container">
+    <aside th:replace="~{fragments/sidebar :: sidebar(activeTab=${activeTab})}"></aside>
+
+    <main id="main-content" class="app-main" role="main">
+
+      <!-- Breadcrumbs Navigation -->
+      <nav aria-label="Breadcrumbs" class="breadcrumbs">
+        <a th:href="@{/documents}" class="breadcrumb-link" id="breadcrumb-dashboard-link">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="15 18 9 12 15 6"></polyline>
+          </svg>
+          <span>Documents</span>
+        </a>
+        <span class="breadcrumb-separator" aria-hidden="true">/</span>
+        <span class="breadcrumb-current" aria-current="page">Audit History</span>
+      </nav>
+
+      <!-- Dashboard Toolbar / Header -->
+      <div class="dashboard-toolbar">
+        <div>
+          <h1 style="font-size: var(--text-2xl); font-weight: 700; letter-spacing: -0.025em; margin: 0 0 4px 0; color: var(--text-primary);" id="audit-page-title">
+            Audit History
+          </h1>
+          <p style="font-size: var(--text-sm); color: var(--text-secondary); margin: 0;">
+            <span th:if="${isAdmin and selectedActor == null}">Immutable platform-wide audit log of all security events and document operations.</span>
+            <span th:if="${isAdmin and selectedActor != null}">Security audit events filtered for actor <strong th:text="${selectedActor}">user</strong>.</span>
+            <span th:if="${!isAdmin}">Immutable record of all security-relevant actions and file operations performed by your account.</span>
+          </p>
+        </div>
+
+        <div th:if="${isAdmin and selectedActor != null}">
+          <a th:href="@{/audit}" class="btn btn-secondary btn-sm" id="clear-filter-btn">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="18" y1="6" x2="6" y2="18"></line>
+              <line x1="6" y1="6" x2="18" y2="18"></line>
+            </svg>
+            <span>View All Events</span>
+          </a>
+        </div>
+      </div>
+
+      <!-- Metrics Summary Cards -->
+      <div class="metrics-grid">
+        <div class="metric-card">
+          <div class="metric-title">Recorded Events</div>
+          <div class="metric-number" id="metric-total-events" th:text="${totalCount}">0</div>
+          <div class="metric-sub">
+            <span th:if="${isAdmin and selectedActor == null}">Total security events recorded</span>
+            <span th:if="${isAdmin and selectedActor != null}" th:text="'Events logged for ' + ${selectedActor}">Events for actor</span>
+            <span th:if="${!isAdmin}">Total events recorded for your account</span>
+          </div>
+        </div>
+
+        <div class="metric-card">
+          <div class="metric-title">Successful Operations</div>
+          <div class="metric-number" id="metric-success-events" th:text="${successCount}">0</div>
+          <div class="metric-sub">Committed operations and authorized reads</div>
+        </div>
+
+        <div class="metric-card">
+          <div class="metric-title">Security Denials</div>
+          <div class="metric-number" id="metric-denied-events" th:text="${deniedCount}">0</div>
+          <div class="metric-sub">Blocked access attempts and security rejections</div>
+        </div>
+      </div>
+
+      <!-- Audit Events Table Card -->
+      <div class="table-card">
+        <!-- Empty State View -->
+        <div th:if="${events == null or events.isEmpty()}" class="empty-state" id="audit-empty-state">
+          <div class="empty-state-icon">
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
+              <polyline points="9 12 11 14 15 10"></polyline>
+            </svg>
+          </div>
+          <h2 class="empty-state-title">No audit records found</h2>
+          <p class="empty-state-desc">
+            <span th:if="${selectedActor != null}">No recorded audit events match the specified filter.</span>
+            <span th:if="${selectedActor == null}">There are currently no security audit events recorded.</span>
+          </p>
+        </div>
+
+        <!-- Audit Table View -->
+        <div th:if="${events != null and !events.isEmpty()}" class="table-responsive">
+          <table class="data-table" id="audit-table" aria-label="Security Audit Log">
+            <thead>
+              <tr>
+                <th scope="col" style="min-width: 170px;">Timestamp</th>
+                <th scope="col" style="min-width: 180px;">Action</th>
+                <th scope="col">Outcome</th>
+                <th scope="col">Actor</th>
+                <th scope="col">Document</th>
+                <th scope="col">Target User</th>
+                <th scope="col" style="min-width: 200px;">Details</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr th:each="event : ${events}" th:id="'audit-row-' + ${event.id}">
+                <!-- Timestamp -->
+                <td>
+                  <span class="timestamp-text" style="font-family: var(--font-mono); font-size: var(--text-xs);"
+                        th:text="${event.timestamp != null ? #temporals.format(event.timestamp, 'yyyy-MM-dd HH:mm:ss') : '-'}">
+                    2026-10-22 14:00:00
+                  </span>
+                </td>
+
+                <!-- Action / Event Type -->
+                <td>
+                  <div style="display: flex; flex-direction: column; gap: 2px;">
+                    <span style="font-weight: 600; font-size: var(--text-xs); color: var(--text-primary);" th:text="${event.actionLabel}">
+                      Document Created
+                    </span>
+                    <span style="font-family: var(--font-mono); font-size: 11px; color: var(--text-muted);" th:text="${event.action}">
+                      DOCUMENT_CREATE
+                    </span>
+                  </div>
+                </td>
+
+                <!-- Outcome Badge -->
+                <td>
+                  <span th:if="${event.outcome.name() == 'SUCCESS'}" class="badge badge-accent">SUCCESS</span>
+                  <span th:if="${event.outcome.name() == 'DENIED'}" class="badge" style="background-color: var(--color-danger-subtle); color: var(--color-danger-text); border: 1px solid var(--color-danger-border);">DENIED</span>
+                  <span th:if="${event.outcome.name() == 'FAILURE'}" class="badge" style="background-color: var(--color-warning-subtle); color: var(--color-warning-text); border: 1px solid var(--color-warning-border);">FAILURE</span>
+                </td>
+
+                <!-- Actor Username -->
+                <td>
+                  <span style="font-weight: 500; font-size: var(--text-xs); color: var(--text-primary);" th:text="${event.actorUsername}">
+                    actor
+                  </span>
+                </td>
+
+                <!-- Document Reference -->
+                <td>
+                  <span th:if="${event.documentId != null}">
+                    <a th:href="@{/documents/{id}(id=${event.documentId})}"
+                       class="doc-title-link"
+                       style="font-family: var(--font-mono); font-size: var(--text-xs); font-weight: 500;"
+                       th:text="'#' + ${event.documentId}">#10</a>
+                  </span>
+                  <span th:if="${event.documentId == null}" style="color: var(--text-muted); font-size: var(--text-xs);">-</span>
+                </td>
+
+                <!-- Target User -->
+                <td>
+                  <span th:if="${event.targetUsername != null}" style="font-size: var(--text-xs); color: var(--text-secondary);" th:text="${event.targetUsername}">target</span>
+                  <span th:if="${event.targetUsername == null}" style="color: var(--text-muted); font-size: var(--text-xs);">-</span>
+                </td>
+
+                <!-- Safe Details / Denial Reason -->
+                <td>
+                  <span th:if="${event.details != null}"
+                        style="font-size: var(--text-xs); color: var(--text-muted); max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: normal; display: block;"
+                        th:text="${event.details}">details</span>
+                  <span th:if="${event.details == null}" style="color: var(--text-muted); font-size: var(--text-xs);">-</span>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Pagination Controls Footer -->
+        <div class="card-footer" style="display: flex; justify-content: space-between; align-items: center; padding: var(--space-4) var(--space-6);" th:if="${totalPages > 1}">
+          <div style="font-size: var(--text-xs); color: var(--text-muted);">
+            Showing page <strong th:text="${currentPage + 1}">1</strong> of <strong th:text="${totalPages}">1</strong>
+            (<span th:text="${totalElements}">0</span> total events)
+          </div>
+          <div style="display: flex; gap: var(--space-2);">
+            <!-- Previous Page Link -->
+            <a th:if="${hasPrevious}"
+               th:href="@{/audit(page=${currentPage - 1}, actor=${selectedActor})}"
+               class="btn btn-secondary btn-sm"
+               id="audit-prev-page-btn">
+              &larr; Previous
+            </a>
+            <span th:if="${!hasPrevious}" class="btn btn-secondary btn-sm" style="opacity: 0.5; pointer-events: none;">
+              &larr; Previous
+            </span>
+
+            <!-- Next Page Link -->
+            <a th:if="${hasNext}"
+               th:href="@{/audit(page=${currentPage + 1}, actor=${selectedActor})}"
+               class="btn btn-secondary btn-sm"
+               id="audit-next-page-btn">
+              Next &rarr;
+            </a>
+            <span th:if="${!hasNext}" class="btn btn-secondary btn-sm" style="opacity: 0.5; pointer-events: none;">
+              Next &rarr;
+            </span>
+          </div>
+        </div>
+
+      </div>
+
+    </main>
+  </div>
+
+</body>
+</html>

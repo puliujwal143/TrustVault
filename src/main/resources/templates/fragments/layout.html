@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments/head :: head(title=${pageTitle})}">
+</head>
+<body class="app-shell">
+
+  <!-- Accessible Skip Link -->
+  <a href="#main-content" class="skip-link">Skip to main content</a>
+
+  <!-- Top Navigation Header -->
+  <header th:replace="~{fragments/navbar :: navbar}"></header>
+
+  <!-- Main Application Body -->
+  <div class="app-container">
+    <!-- Collapsible Sidebar -->
+    <aside th:replace="~{fragments/sidebar :: sidebar(activeTab=${activeTab})}"></aside>
+
+    <!-- Main Content Region -->
+    <main id="main-content" class="app-main" role="main">
+      <div th:insert="${content}">
+        <!-- Page specific content will be injected here -->
+      </div>
+    </main>
+  </div>
+
+</body>
+</html>

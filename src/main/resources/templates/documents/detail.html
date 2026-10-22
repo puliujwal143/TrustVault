@@ -1,0 +1,702 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments/head :: head(title=${pageTitle})}">
+</head>
+<body class="app-shell">
+
+  <!-- Accessible Skip Link -->
+  <a href="#main-content" class="skip-link">Skip to main content</a>
+
+  <!-- Top Navigation Header -->
+  <header th:replace="~{fragments/navbar :: navbar}"></header>
+
+  <!-- App Container (Sidebar + Main Content) -->
+  <div class="app-container">
+    <aside th:replace="~{fragments/sidebar :: sidebar(activeTab=${activeTab})}"></aside>
+
+    <main id="main-content" class="app-main" role="main">
+
+      <!-- Breadcrumbs Navigation -->
+      <nav aria-label="Breadcrumbs" class="breadcrumbs">
+        <a th:href="@{/documents}" class="breadcrumb-link" id="breadcrumb-documents-link">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="15 18 9 12 15 6"></polyline>
+          </svg>
+          <span>Documents</span>
+        </a>
+        <span class="breadcrumb-separator" aria-hidden="true">/</span>
+        <span class="breadcrumb-current" th:text="${document.title}" aria-current="page">Document Title</span>
+      </nav>
+
+      <!-- Flash / Success Message Alert -->
+      <div th:if="${successMessage != null}" class="alert alert-success" role="alert" id="detail-success-alert">
+        <svg class="alert-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+          <polyline points="22 4 12 14.01 9 11.01"></polyline>
+        </svg>
+        <div class="alert-content">
+          <div class="alert-title">Success</div>
+          <div class="alert-message" th:text="${successMessage}">File was successfully attached.</div>
+        </div>
+      </div>
+
+      <!-- Server / Query Error Alert -->
+      <div th:if="${errorMessage != null}" class="alert alert-danger" role="alert" id="detail-server-error-alert">
+        <svg class="alert-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="10"></circle>
+          <line x1="12" y1="8" x2="12" y2="12"></line>
+          <line x1="12" y1="16" x2="12.01" y2="16"></line>
+        </svg>
+        <div class="alert-content">
+          <div class="alert-title">Error</div>
+          <div class="alert-message" th:text="${errorMessage}">Error message</div>
+        </div>
+      </div>
+
+      <!-- Asynchronous Upload Error Alert -->
+      <div id="detail-error-alert" class="alert alert-danger" role="alert" style="display: none;">
+        <svg class="alert-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="10"></circle>
+          <line x1="12" y1="8" x2="12" y2="12"></line>
+          <line x1="12" y1="16" x2="12.01" y2="16"></line>
+        </svg>
+        <div class="alert-content">
+          <div class="alert-title">Upload Failed</div>
+          <div class="alert-message" id="detail-error-message">Error details</div>
+        </div>
+      </div>
+
+      <!-- Document Header -->
+      <div class="detail-header">
+        <div class="detail-header-main">
+          <div class="detail-title-row">
+            <h1 class="detail-title" th:text="${document.title}" id="document-detail-title">Document Title</h1>
+
+            <!-- Access Permission Badge -->
+            <span th:if="${document.isOwner}" class="badge badge-accent" id="badge-doc-owner">OWNER</span>
+            <span th:if="${!document.isOwner and document.permissionLabel == 'EDIT'}" class="badge" style="background-color: var(--color-info-subtle); color: var(--color-info-text); border: 1px solid var(--color-info-border);" id="badge-doc-edit">EDIT</span>
+            <span th:if="${!document.isOwner and document.permissionLabel == 'READ'}" class="badge badge-muted" id="badge-doc-read">READ</span>
+          </div>
+
+          <p th:if="${document.description != null and !document.description.isEmpty()}"
+             class="doc-desc"
+             style="max-width: 640px; white-space: normal; font-size: var(--text-sm); color: var(--text-secondary); margin: 0;"
+             th:text="${document.description}"
+             id="document-detail-desc">
+            Document description text.
+          </p>
+          <p th:if="${document.description == null or document.description.isEmpty()}"
+             class="doc-desc"
+             style="font-style: italic; font-size: var(--text-sm); color: var(--text-muted); margin: 0;">
+            No description provided.
+          </p>
+        </div>
+
+        <div style="display: flex; align-items: center; gap: var(--space-2);">
+          <!-- Edit Details Button (Owner and EDIT Collaborators) -->
+          <button th:if="${document.canEdit}" type="button" class="btn btn-secondary" id="open-edit-doc-modal-btn" onclick="openEditModal()">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+              <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+            </svg>
+            <span>Edit</span>
+          </button>
+
+          <!-- Delete Document Button (Owner Only) -->
+          <button th:if="${document.isOwner}" type="button" class="btn btn-danger" id="open-delete-doc-modal-btn" onclick="openDeleteModal()" style="background-color: var(--color-danger, #ef4444); color: white; border: none;">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="3 6 5 6 21 6"></polyline>
+              <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+              <line x1="10" y1="11" x2="10" y2="17"></line>
+              <line x1="14" y1="11" x2="14" y2="17"></line>
+            </svg>
+            <span>Delete</span>
+          </button>
+
+          <a th:href="@{/documents}" class="btn btn-secondary" id="back-to-dashboard-btn">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="19" y1="12" x2="5" y2="12"></line>
+              <polyline points="12 19 5 12 12 5"></polyline>
+            </svg>
+            <span>Back to Documents</span>
+          </a>
+        </div>
+      </div>
+
+      <!-- Main Detail Content Grid -->
+      <div class="detail-grid">
+
+        <!-- Left Column: Metadata & File Information -->
+        <div>
+          <!-- Document Metadata Card -->
+          <div class="detail-card" id="document-metadata-card">
+            <div class="detail-card-header">
+              <h2 class="detail-card-title">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                  <polyline points="14 2 14 8 20 8"></polyline>
+                </svg>
+                <span>Document Information</span>
+              </h2>
+            </div>
+            <div class="detail-card-body">
+              <div class="meta-grid">
+                <div class="meta-item">
+                  <span class="meta-label">Document ID</span>
+                  <span class="meta-value" style="font-family: var(--font-mono);" th:text="${document.id}">1</span>
+                </div>
+                <div class="meta-item">
+                  <span class="meta-label">Owner</span>
+                  <span class="meta-value" th:text="${document.ownerUsername}">owner</span>
+                </div>
+                <div class="meta-item">
+                  <span class="meta-label">Access Level</span>
+                  <span class="meta-value" th:text="${document.permissionLabel}">OWNER</span>
+                </div>
+                <div class="meta-item">
+                  <span class="meta-label">Created At</span>
+                  <span class="meta-value" th:text="${document.createdAt != null ? #temporals.format(document.createdAt, 'yyyy-MM-dd HH:mm:ss') : '-'}">2026-10-22 00:00:00</span>
+                </div>
+                <div class="meta-item">
+                  <span class="meta-label">Last Updated</span>
+                  <span class="meta-value" th:text="${document.updatedAt != null ? #temporals.format(document.updatedAt, 'yyyy-MM-dd HH:mm:ss') : '-'}">2026-10-22 00:00:00</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Attached File Card -->
+          <div class="detail-card" id="document-file-card">
+            <div class="detail-card-header">
+              <h2 class="detail-card-title">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path>
+                </svg>
+                <span>Attached File Payload</span>
+              </h2>
+            </div>
+            <div class="detail-card-body">
+              <!-- When file payload is attached -->
+              <div th:if="${document.hasFile}" id="file-attachment-info">
+                <div class="meta-grid">
+                  <div class="meta-item">
+                    <span class="meta-label">Original Filename</span>
+                    <span class="meta-value" style="font-weight: 600;" th:text="${document.fileOriginalName}">document.pdf</span>
+                  </div>
+                  <div class="meta-item">
+                    <span class="meta-label">File Type</span>
+                    <span class="meta-value" style="font-family: var(--font-mono); font-size: var(--text-xs);" th:text="${document.fileContentType}">application/pdf</span>
+                  </div>
+                  <div class="meta-item">
+                    <span class="meta-label">Payload Size</span>
+                    <span class="meta-value" th:text="${document.formattedFileSize}">1.2 MB</span>
+                  </div>
+                  <div class="meta-item">
+                    <span class="meta-label">Uploaded At</span>
+                    <span class="meta-value" th:text="${document.fileUploadedAt != null ? #temporals.format(document.fileUploadedAt, 'yyyy-MM-dd HH:mm:ss') : '-'}">2026-10-22 00:00:00</span>
+                  </div>
+                </div>
+
+                <!-- Download File Action (Available to all authorized viewers of this document) -->
+                <div style="margin-top: var(--space-4);" id="download-action-container">
+                  <a th:href="@{/api/documents/{id}/download(id=${document.id})}"
+                     class="btn btn-secondary"
+                     id="download-file-btn"
+                     style="display: inline-flex; align-items: center; gap: var(--space-2);">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                      <polyline points="7 10 12 15 17 10"></polyline>
+                      <line x1="12" y1="15" x2="12" y2="3"></line>
+                    </svg>
+                    <span>Download File</span>
+                  </a>
+                </div>
+              </div>
+
+              <!-- When metadata only / no file attached -->
+              <div th:if="${!document.hasFile}" class="empty-state" style="padding: var(--space-6) 0;" id="file-attachment-empty">
+                <div class="empty-state-icon" style="width: 44px; height: 44px; margin-bottom: var(--space-3);">
+                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"></path>
+                    <polyline points="13 2 13 9 20 9"></polyline>
+                  </svg>
+                </div>
+                <div style="font-size: var(--text-sm); font-weight: 600; color: var(--text-primary); margin-bottom: 2px;">
+                  No binary file attached
+                </div>
+                <div style="font-size: var(--text-xs); color: var(--text-muted);">
+                  This document currently contains only metadata.
+                </div>
+              </div>
+
+              <!-- Authorized Upload Form (Visible to Owner and Collaborators with EDIT access) -->
+              <div th:if="${document.canEdit}" class="file-upload-section" style="margin-top: var(--space-5); padding-top: var(--space-5); border-top: 1px solid var(--border-subtle);" id="upload-form-section">
+                <div style="font-size: var(--text-xs); font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); margin-bottom: var(--space-3);" id="upload-form-heading">
+                  <span th:if="${document.hasFile}">Replace Attached File</span>
+                  <span th:if="${!document.hasFile}">Attach File Payload</span>
+                </div>
+
+                <form id="file-upload-form"
+                      th:action="@{/api/documents/{id}/file(id=${document.id})}"
+                      method="post"
+                      enctype="multipart/form-data">
+
+                  <input type="hidden" th:if="${_csrf != null}" th:name="${_csrf.parameterName}" th:value="${_csrf.token}" />
+
+                  <div class="form-group" style="margin-bottom: var(--space-3);">
+                    <label for="file-upload-input" class="form-label" style="font-size: var(--text-xs);">
+                      Select File Payload
+                    </label>
+                    <input type="file"
+                           id="file-upload-input"
+                           name="file"
+                           class="form-control"
+                           style="font-size: var(--text-xs); padding: var(--space-2) var(--space-3);"
+                           accept=".pdf,.docx,.xlsx,.pptx,.txt,.csv,.png,.jpg,.jpeg"
+                           required
+                           aria-describedby="file-upload-help" />
+                    <div id="file-upload-help" class="form-hint" style="font-size: 11px; color: var(--text-muted); margin-top: 4px;">
+                      Supported formats: PDF, DOCX, XLSX, PPTX, TXT, CSV, PNG, JPG (maximum 10 MiB).
+                    </div>
+                  </div>
+
+                  <div style="display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap;">
+                    <button type="submit" class="btn btn-primary" id="upload-file-btn">
+                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                        <polyline points="17 8 12 3 7 8"></polyline>
+                        <line x1="12" y1="3" x2="12" y2="15"></line>
+                      </svg>
+                      <span id="upload-btn-text" th:text="${document.hasFile ? 'Replace File' : 'Upload File'}">Upload File</span>
+                    </button>
+                    <span id="upload-spinner" style="display: none; align-items: center; gap: 6px; font-size: var(--text-xs); color: var(--text-muted);">
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="spin">
+                        <line x1="12" y1="2" x2="12" y2="6"></line>
+                        <line x1="12" y1="18" x2="12" y2="22"></line>
+                        <line x1="4.93" y1="4.93" x2="7.76" y2="7.76"></line>
+                        <line x1="16.24" y1="16.24" x2="19.07" y2="19.07"></line>
+                        <line x1="2" y1="12" x2="6" y2="12"></line>
+                        <line x1="18" y1="12" x2="22" y2="12"></line>
+                        <line x1="4.93" y1="19.07" x2="7.76" y2="16.24"></line>
+                        <line x1="16.24" y1="7.76" x2="19.07" y2="4.93"></line>
+                      </svg>
+                      <span>Uploading &amp; verifying...</span>
+                    </span>
+                  </div>
+                </form>
+              </div>
+
+              <!-- Read-only access notice when user cannot edit -->
+              <div th:if="${!document.canEdit}" style="margin-top: var(--space-4); padding-top: var(--space-4); border-top: 1px solid var(--border-subtle); font-size: var(--text-xs); color: var(--text-muted); font-style: italic;" id="upload-read-only-notice">
+                File upload is restricted to the document owner and collaborators with EDIT access.
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Right Column: Collaboration & Sharing (Strictly for Owner) -->
+        <div>
+          <!-- Owner-Only Sharing Section -->
+          <div th:if="${document.isOwner}" class="detail-card" id="document-sharing-card">
+            <div class="detail-card-header">
+              <h2 class="detail-card-title">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+                  <circle cx="9" cy="7" r="4"></circle>
+                  <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
+                  <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+                </svg>
+                <span>Shared Collaborators</span>
+              </h2>
+            </div>
+            <div class="detail-card-body">
+              <p style="font-size: var(--text-xs); color: var(--text-secondary); margin: 0 0 var(--space-4) 0;">
+                As the document owner, you manage who can view or edit this protected resource.
+              </p>
+
+              <!-- Share list table if shares exist -->
+              <div th:if="${document.shares != null and !document.shares.isEmpty()}" class="table-responsive">
+                <table class="data-table" id="shares-table" aria-label="Active Share Grants">
+                  <thead>
+                    <tr>
+                      <th scope="col">User</th>
+                      <th scope="col">Permission</th>
+                      <th scope="col">Granted</th>
+                      <th scope="col" style="text-align: right;">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr th:each="share : ${document.shares}" th:id="'share-row-' + ${share.id}">
+                      <td>
+                        <span style="font-weight: 500; font-size: var(--text-xs); color: var(--text-primary);" th:text="${share.granteeUsername}">grantee</span>
+                      </td>
+                      <td>
+                        <span th:if="${share.permission == 'EDIT'}" class="badge" style="background-color: var(--color-info-subtle); color: var(--color-info-text); border: 1px solid var(--color-info-border);">EDIT</span>
+                        <span th:if="${share.permission == 'READ'}" class="badge badge-muted">READ</span>
+                      </td>
+                      <td>
+                        <span class="timestamp-text" th:text="${share.grantedAt != null ? #temporals.format(share.grantedAt, 'yyyy-MM-dd') : '-'}">2026-10-22</span>
+                      </td>
+                      <td style="text-align: right;">
+                        <form th:action="@{/documents/{id}/shares/revoke(id=${document.id})}" method="post" style="display: inline-block; margin: 0;">
+                          <input type="hidden" th:if="${_csrf != null}" th:name="${_csrf.parameterName}" th:value="${_csrf.token}" />
+                          <input type="hidden" name="granteeUsername" th:value="${share.granteeUsername}" />
+                          <button type="submit"
+                                  class="btn btn-sm btn-danger"
+                                  th:id="'revoke-share-btn-' + ${share.granteeUsername}"
+                                  th:title="'Revoke access for ' + ${share.granteeUsername}">
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 4px;">
+                              <polyline points="3 6 5 6 21 6"></polyline>
+                              <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                            </svg>
+                            <span>Revoke</span>
+                          </button>
+                        </form>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+
+              <!-- Empty shares state -->
+              <div th:if="${document.shares == null or document.shares.isEmpty()}" style="text-align: center; padding: var(--space-4) 0; color: var(--text-muted); font-size: var(--text-xs);" id="shares-empty-notice">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="margin: 0 auto var(--space-2) auto; display: block; opacity: 0.6;">
+                  <circle cx="12" cy="12" r="10"></circle>
+                  <line x1="4.93" y1="4.93" x2="19.07" y2="19.07"></line>
+                </svg>
+                <span>This document has not been shared with any other users. Only you have access.</span>
+              </div>
+
+              <!-- Share Document Form Section (Owner-Only) -->
+              <div class="share-form-section" style="margin-top: var(--space-5); padding-top: var(--space-5); border-top: 1px solid var(--border-subtle);" id="share-form-section">
+                <div style="font-size: var(--text-xs); font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); margin-bottom: var(--space-3);" id="share-form-heading">
+                  <span>Share Document</span>
+                </div>
+
+                <form id="share-document-form"
+                      th:action="@{/documents/{id}/shares(id=${document.id})}"
+                      method="post">
+
+                  <input type="hidden" th:if="${_csrf != null}" th:name="${_csrf.parameterName}" th:value="${_csrf.token}" />
+
+                  <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: var(--space-3); margin-bottom: var(--space-3);">
+                    <div class="form-group" style="margin-bottom: 0;">
+                      <label for="share-username-input" class="form-label" style="font-size: var(--text-xs);">
+                        Recipient Username <span style="color: var(--color-danger);">*</span>
+                      </label>
+                      <input type="text"
+                             id="share-username-input"
+                             name="granteeUsername"
+                             list="available-users-list"
+                             class="form-control"
+                             style="font-size: var(--text-xs); padding: var(--space-2) var(--space-3);"
+                             placeholder="Select or enter username"
+                             required
+                             autocomplete="off" />
+                      <datalist id="available-users-list" th:if="${availableUsers != null}">
+                        <option th:each="user : ${availableUsers}" th:value="${user}" th:text="${user}"></option>
+                      </datalist>
+                    </div>
+
+                    <div class="form-group" style="margin-bottom: 0;">
+                      <label for="share-permission-select" class="form-label" style="font-size: var(--text-xs);">
+                        Access Level <span style="color: var(--color-danger);">*</span>
+                      </label>
+                      <select id="share-permission-select"
+                              name="permission"
+                              class="form-control"
+                              style="font-size: var(--text-xs); padding: var(--space-2) var(--space-3);">
+                        <option value="READ" selected>READ (view only)</option>
+                        <option value="EDIT">EDIT (view, edit &amp; upload)</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div class="form-hint" style="font-size: 11px; color: var(--text-muted); margin-bottom: var(--space-3);">
+                    READ collaborators can view metadata and attached payloads. EDIT collaborators can also modify details and attach files.
+                  </div>
+
+                  <div style="display: flex; align-items: center; justify-content: flex-end;">
+                    <button type="submit" class="btn btn-primary" id="share-document-btn">
+                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+                        <circle cx="9" cy="7" r="4"></circle>
+                        <line x1="20" y1="8" x2="20" y2="14"></line>
+                        <line x1="23" y1="11" x2="17" y2="11"></line>
+                      </svg>
+                      <span>Share Document</span>
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          </div>
+
+          <!-- Non-owner Information Card -->
+          <div th:if="${!document.isOwner}" class="detail-card" id="shared-access-notice-card">
+            <div class="detail-card-header">
+              <h2 class="detail-card-title">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <circle cx="12" cy="12" r="10"></circle>
+                  <line x1="12" y1="16" x2="12" y2="12"></line>
+                  <line x1="12" y1="8" x2="12.01" y2="8"></line>
+                </svg>
+                <span>Access Rights</span>
+              </h2>
+            </div>
+            <div class="detail-card-body" style="font-size: var(--text-xs); color: var(--text-secondary); line-height: 1.5;">
+              <p style="margin: 0 0 var(--space-2) 0;">
+                You are viewing this document via an explicit share grant from <strong th:text="${document.ownerUsername}">owner</strong>.
+              </p>
+              <p style="margin: 0;">
+                Your permission level is <strong th:text="${document.permissionLabel}">READ</strong>. Sharing permissions are managed exclusively by the document owner.
+              </p>
+            </div>
+          </div>
+
+        </div>
+
+      </div>
+
+    </main>
+  </div>
+
+  <!-- Client-side upload handler with CSRF and error presentation -->
+  <script th:inline="javascript">
+    document.addEventListener('DOMContentLoaded', function () {
+      var uploadForm = document.getElementById('file-upload-form');
+      if (!uploadForm) return;
+
+      var fileInput = document.getElementById('file-upload-input');
+      var uploadBtn = document.getElementById('upload-file-btn');
+      var uploadSpinner = document.getElementById('upload-spinner');
+      var errorAlert = document.getElementById('detail-error-alert');
+      var errorMessage = document.getElementById('detail-error-message');
+      var successAlert = document.getElementById('detail-success-alert');
+      var serverErrorAlert = document.getElementById('detail-server-error-alert');
+
+      function hideAlerts() {
+        if (errorAlert) errorAlert.style.display = 'none';
+        if (serverErrorAlert) serverErrorAlert.style.display = 'none';
+      }
+
+      function showError(msg) {
+        if (errorMessage) errorMessage.textContent = msg;
+        if (errorAlert) {
+          errorAlert.style.display = 'flex';
+          errorAlert.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
+        if (successAlert) successAlert.style.display = 'none';
+      }
+
+      function setLoading(isLoading) {
+        if (uploadBtn) uploadBtn.disabled = isLoading;
+        if (fileInput) fileInput.disabled = isLoading;
+        if (uploadSpinner) uploadSpinner.style.display = isLoading ? 'inline-flex' : 'none';
+      }
+
+      uploadForm.addEventListener('submit', function (e) {
+        e.preventDefault();
+        hideAlerts();
+
+        var files = fileInput ? fileInput.files : null;
+        if (!files || files.length === 0) {
+          showError('Please select a file to upload.');
+          return;
+        }
+
+        var file = files[0];
+        // Client-side pre-check for max 10 MiB limit
+        var maxBytes = 10 * 1024 * 1024;
+        if (file.size > maxBytes) {
+          showError('Upload payload exceeds the maximum permitted size limit of 10 MiB.');
+          return;
+        }
+
+        setLoading(true);
+
+        var formData = new FormData();
+        formData.append('file', file);
+
+        // Fetch CSRF tokens
+        var csrfTokenMeta = document.querySelector('meta[name="_csrf"]');
+        var csrfHeaderMeta = document.querySelector('meta[name="_csrf_header"]');
+        var csrfToken = csrfTokenMeta ? csrfTokenMeta.getAttribute('content') : (uploadForm.querySelector('input[name="_csrf"]')?.value || '');
+        var csrfHeader = csrfHeaderMeta ? csrfHeaderMeta.getAttribute('content') : 'X-CSRF-TOKEN';
+
+        var headers = {};
+        if (csrfToken && csrfHeader) {
+          headers[csrfHeader] = csrfToken;
+        }
+
+        var uploadUrl = uploadForm.getAttribute('action');
+
+        fetch(uploadUrl, {
+          method: 'POST',
+          headers: headers,
+          body: formData
+        })
+        .then(function (response) {
+          if (response.ok) {
+            return response.json().then(function (data) {
+              var fileName = (data && data.fileOriginalName) ? data.fileOriginalName : file.name;
+              var redirectUrl = window.location.pathname + '?uploadSuccess=' + encodeURIComponent(fileName);
+              window.location.href = redirectUrl;
+            }).catch(function () {
+              var redirectUrl = window.location.pathname + '?uploadSuccess=' + encodeURIComponent(file.name);
+              window.location.href = redirectUrl;
+            });
+          } else {
+            setLoading(false);
+            return response.json().then(function (errData) {
+              var errText = (errData && errData.message) ? errData.message : ('Upload failed with status ' + response.status);
+              showError(errText);
+            }).catch(function () {
+              showError('Upload failed with status ' + response.status);
+            });
+          }
+        })
+        .catch(function () {
+          setLoading(false);
+          showError('Network error or server unreachable. Please try again.');
+        });
+      });
+    });
+  </script>
+
+  <!-- Edit Document Modal Backdrop -->
+  <div th:if="${document.canEdit}" class="modal-backdrop" id="edit-doc-modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="edit-doc-modal-title">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <h3 class="modal-title" id="edit-doc-modal-title">Edit Document Details</h3>
+        <button type="button" class="modal-close" onclick="closeEditModal()" aria-label="Close dialog">&times;</button>
+      </div>
+
+      <form th:action="@{/documents/{id}/edit(id=${document.id})}" th:object="${updateDocumentForm}" method="post" id="edit-document-form">
+        <!-- CSRF Token -->
+        <input type="hidden" th:name="${_csrf?.parameterName}" th:value="${_csrf?.token}"/>
+
+        <div class="modal-body">
+          <!-- Title Field -->
+          <div class="form-group">
+            <label for="edit-doc-title" class="form-label">
+              Document Title <span style="color: var(--color-danger);">*</span>
+            </label>
+            <input type="text"
+                   id="edit-doc-title"
+                   name="title"
+                   th:value="${updateDocumentForm != null ? updateDocumentForm.title : document.title}"
+                   class="form-control"
+                   placeholder="e.g. Q4 Financial Audit Report"
+                   maxlength="255"
+                   required>
+            <div class="form-hint">Required. Maximum 255 characters.</div>
+          </div>
+
+          <!-- Description Field -->
+          <div class="form-group">
+            <label for="edit-doc-desc" class="form-label">Description (Optional)</label>
+            <textarea id="edit-doc-desc"
+                      name="description"
+                      th:text="${updateDocumentForm != null ? updateDocumentForm.description : document.description}"
+                      class="form-control"
+                      rows="3"
+                      placeholder="Brief summary or context regarding this document"
+                      maxlength="1000"></textarea>
+            <div class="form-hint">Optional. Maximum 1000 characters.</div>
+          </div>
+        </div>
+
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" onclick="closeEditModal()">Cancel</button>
+          <button type="submit" class="btn btn-primary" id="submit-edit-doc-btn">
+            <span>Save Changes</span>
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Delete Document Modal Backdrop -->
+  <div th:if="${document.isOwner}" class="modal-backdrop" id="delete-doc-modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="delete-doc-modal-title">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <h3 class="modal-title" id="delete-doc-modal-title" style="color: var(--color-danger);">Confirm Document Deletion</h3>
+        <button type="button" class="modal-close" onclick="closeDeleteModal()" aria-label="Close dialog">&times;</button>
+      </div>
+
+      <form th:action="@{/documents/{id}/delete(id=${document.id})}" method="post" id="delete-document-form">
+        <!-- CSRF Token -->
+        <input type="hidden" th:name="${_csrf?.parameterName}" th:value="${_csrf?.token}"/>
+
+        <div class="modal-body">
+          <p style="font-size: var(--text-sm); color: var(--text-primary); margin: 0 0 var(--space-3) 0;">
+            Are you sure you want to permanently delete <strong th:text="${document.title}">this document</strong>?
+          </p>
+          <p style="font-size: var(--text-xs); color: var(--color-danger); margin: 0; line-height: 1.5;">
+            Warning: This action will permanently remove the document metadata, any attached file payload from secure storage, and all active collaborator shares. This action cannot be undone.
+          </p>
+        </div>
+
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" onclick="closeDeleteModal()">Cancel</button>
+          <button type="submit" class="btn btn-danger" id="submit-delete-doc-btn" style="background-color: var(--color-danger, #ef4444); color: white; border: none;">
+            <span>Permanently Delete</span>
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal Interactivity Script -->
+  <script>
+    function openEditModal() {
+      var modal = document.getElementById('edit-doc-modal-backdrop');
+      if (modal) {
+        modal.classList.add('show');
+        var input = document.getElementById('edit-doc-title');
+        if (input) {
+          setTimeout(function() { input.focus(); }, 50);
+        }
+      }
+    }
+
+    function closeEditModal() {
+      var modal = document.getElementById('edit-doc-modal-backdrop');
+      if (modal) {
+        modal.classList.remove('show');
+      }
+    }
+
+    function openDeleteModal() {
+      var modal = document.getElementById('delete-doc-modal-backdrop');
+      if (modal) {
+        modal.classList.add('show');
+      }
+    }
+
+    function closeDeleteModal() {
+      var modal = document.getElementById('delete-doc-modal-backdrop');
+      if (modal) {
+        modal.classList.remove('show');
+      }
+    }
+
+    document.addEventListener('keydown', function(e) {
+      if (e.key === 'Escape') {
+        closeEditModal();
+        closeDeleteModal();
+      }
+    });
+
+    document.getElementById('edit-doc-modal-backdrop')?.addEventListener('click', function(e) {
+      if (e.target === this) closeEditModal();
+    });
+
+    document.getElementById('delete-doc-modal-backdrop')?.addEventListener('click', function(e) {
+      if (e.target === this) closeDeleteModal();
+    });
+  </script>
+
+</body>
+</html>

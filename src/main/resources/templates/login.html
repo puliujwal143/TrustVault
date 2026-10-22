@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments/head :: head(title='Sign In')}">
+</head>
+<body class="auth-page">
+
+  <!-- Top Auth Header with Brand & Theme Selector -->
+  <header class="auth-header">
+    <a th:href="@{/login}" class="navbar-brand">
+      <img th:src="@{/images/logo.svg}" alt="TrustVault Logo" class="brand-logo-img">
+      <span class="brand-text">TrustVault</span>
+      <span class="brand-badge">SECURE</span>
+    </a>
+
+    <!-- Theme Selector (Light, Dark, System) -->
+    <div class="theme-selector" role="radiogroup" aria-label="Appearance preference">
+      <button type="button" class="theme-opt-btn" data-theme-value="light" role="radio" aria-checked="false" title="Light appearance">
+        <svg class="theme-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="5"></circle>
+          <line x1="12" y1="1" x2="12" y2="3"></line>
+          <line x1="12" y1="21" x2="12" y2="23"></line>
+          <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+          <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+          <line x1="1" y1="12" x2="3" y2="12"></line>
+          <line x1="21" y1="12" x2="23" y2="12"></line>
+          <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+          <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+        </svg>
+        <span>Light</span>
+      </button>
+
+      <button type="button" class="theme-opt-btn" data-theme-value="dark" role="radio" aria-checked="false" title="Dark appearance">
+        <svg class="theme-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
+        </svg>
+        <span>Dark</span>
+      </button>
+
+      <button type="button" class="theme-opt-btn active" data-theme-value="system" role="radio" aria-checked="true" title="Follow operating system preference">
+        <svg class="theme-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
+          <line x1="8" y1="21" x2="16" y2="21"></line>
+          <line x1="12" y1="17" x2="12" y2="21"></line>
+        </svg>
+        <span>System</span>
+      </button>
+    </div>
+  </header>
+
+  <!-- Central Authentication Card -->
+  <main class="auth-container">
+    <div class="auth-card">
+      <div class="auth-brand-badge-wrap">
+        <div class="auth-emblem">
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+            <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+          </svg>
+        </div>
+        <h1 class="auth-title">Sign in to TrustVault</h1>
+        <p class="auth-subtitle">Enter your enterprise credentials to access protected documents</p>
+      </div>
+
+      <!-- Authentication Status Alerts -->
+      <!-- 1. Invalid Login Error -->
+      <div th:if="${param.error != null}" class="alert alert-danger" role="alert" id="auth-error-alert">
+        <svg class="alert-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="10"></circle>
+          <line x1="12" y1="8" x2="12" y2="12"></line>
+          <line x1="12" y1="16" x2="12.01" y2="16"></line>
+        </svg>
+        <div class="alert-content">
+          <div class="alert-title">Authentication Failed</div>
+          <div class="alert-message">Invalid username or password. Please verify your credentials and try again.</div>
+        </div>
+      </div>
+
+      <!-- 2. Session Expired Notice -->
+      <div th:if="${param.expired != null}" class="alert alert-warning" role="alert" id="auth-expired-alert">
+        <svg class="alert-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+          <line x1="12" y1="9" x2="12" y2="13"></line>
+          <line x1="12" y1="17" x2="12.01" y2="17"></line>
+        </svg>
+        <div class="alert-content">
+          <div class="alert-title">Session Expired</div>
+          <div class="alert-message">Your session has expired due to inactivity or a security credential change. Please sign in again.</div>
+        </div>
+      </div>
+
+      <!-- 3. Successful Logout Notice -->
+      <div th:if="${param.logout != null}" class="alert alert-success" role="alert" id="auth-logout-alert">
+        <svg class="alert-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+          <polyline points="22 4 12 14.01 9 11.01"></polyline>
+        </svg>
+        <div class="alert-content">
+          <div class="alert-title">Signed Out</div>
+          <div class="alert-message">You have been safely signed out of TrustVault.</div>
+        </div>
+      </div>
+
+      <!-- Login Form with CSRF Protection -->
+      <form th:action="@{/login}" method="post" id="login-form">
+        <!-- Explicit CSRF Token -->
+        <input type="hidden" th:name="${_csrf?.parameterName}" th:value="${_csrf?.token}"/>
+
+        <!-- Username Input -->
+        <div class="form-group">
+          <label for="username" class="form-label">Username</label>
+          <div class="input-icon-wrap">
+            <svg class="input-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+              <circle cx="12" cy="7" r="4"></circle>
+            </svg>
+            <input type="text"
+                   id="username"
+                   name="username"
+                   class="form-control"
+                   placeholder="Enter your username"
+                   required
+                   autofocus
+                   autocomplete="username">
+          </div>
+        </div>
+
+        <!-- Password Input -->
+        <div class="form-group">
+          <label for="password" class="form-label">Password</label>
+          <div class="input-icon-wrap">
+            <svg class="input-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+              <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+            </svg>
+            <input type="password"
+                   id="password"
+                   name="password"
+                   class="form-control"
+                   placeholder="Enter your password"
+                   required
+                   autocomplete="current-password">
+          </div>
+        </div>
+
+        <!-- Submit Button -->
+        <div style="margin-top: var(--space-6);">
+          <button type="submit" class="btn btn-primary btn-block" id="login-submit-button">
+            <span>Authenticate &amp; Open Vault</span>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="5" y1="12" x2="19" y2="12"></line>
+              <polyline points="12 5 19 12 12 19"></polyline>
+            </svg>
+          </button>
+        </div>
+      </form>
+
+      <!-- Security Guidance Notice -->
+      <div style="margin-top: var(--space-6); padding-top: var(--space-4); border-top: 1px solid var(--border-subtle); text-align: center;">
+        <span style="font-size: var(--text-xs); color: var(--text-muted);">
+          Protected by role-based access control and anti-tamper audit logging.
+        </span>
+      </div>
+    </div>
+  </main>
+
+  <!-- Auth Footer -->
+  <footer class="auth-footer">
+    <div>TrustVault Enterprise Document Security &bull; Strict Access Isolation</div>
+    <div style="margin-top: 4px;">Public registration is disabled. Contact your vault administrator for access.</div>
+  </footer>
+
+</body>
+</html>

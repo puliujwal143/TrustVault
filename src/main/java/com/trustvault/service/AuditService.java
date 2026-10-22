@@ -262,8 +262,43 @@ public class AuditService {
     }
 
     @Transactional(readOnly = true)
+    public Page<AuditEvent> getEventsForActor(String actorUsername, Pageable pageable) {
+        if (actorUsername == null || actorUsername.isBlank()) {
+            return Page.empty(pageable != null ? pageable : Pageable.unpaged());
+        }
+        return auditEventRepository.findByActorUsernameOrderByTimestampDesc(
+                actorUsername.trim(),
+                pageable != null ? pageable : Pageable.unpaged()
+        );
+    }
+
+    @Transactional(readOnly = true)
     public long getEventCount() {
         return auditEventRepository.count();
+    }
+
+    @Transactional(readOnly = true)
+    public long getEventCountForActor(String actorUsername) {
+        if (actorUsername == null || actorUsername.isBlank()) {
+            return 0L;
+        }
+        return auditEventRepository.countByActorUsername(actorUsername.trim());
+    }
+
+    @Transactional(readOnly = true)
+    public long getEventCountByOutcome(AuditOutcome outcome) {
+        if (outcome == null) {
+            return 0L;
+        }
+        return auditEventRepository.countByOutcome(outcome);
+    }
+
+    @Transactional(readOnly = true)
+    public long getEventCountForActorAndOutcome(String actorUsername, AuditOutcome outcome) {
+        if (actorUsername == null || actorUsername.isBlank() || outcome == null) {
+            return 0L;
+        }
+        return auditEventRepository.countByActorUsernameAndOutcome(actorUsername.trim(), outcome);
     }
 
     // =========================================================================

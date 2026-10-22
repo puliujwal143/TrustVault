@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head th:fragment="head(title)">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title th:text="${title != null ? title + ' — TrustVault' : 'TrustVault — Secure Enterprise Document Vault'}">TrustVault</title>
+
+  <!-- Synchronous pre-render script: eliminates flash of wrong theme before DOM paint -->
+  <script>
+    (function() {
+      try {
+        var pref = localStorage.getItem('trustvault_theme_pref') || 'system';
+        var isDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+        var effective = (pref === 'dark' || (pref === 'system' && isDark)) ? 'dark' : 'light';
+        document.documentElement.setAttribute('data-theme', effective);
+        document.documentElement.style.colorScheme = effective;
+      } catch (e) {
+        document.documentElement.setAttribute('data-theme', 'light');
+        document.documentElement.style.colorScheme = 'light';
+      }
+    })();
+  </script>
+
+  <!-- Spring Security CSRF Meta Headers for Asynchronous Requests -->
+  <meta name="_csrf" th:content="${_csrf?.token}">
+  <meta name="_csrf_header" th:content="${_csrf?.headerName}">
+
+  <!-- Favicon / Brand Icon -->
+  <link rel="icon" type="image/svg+xml" th:href="@{/images/logo.svg}">
+
+  <!-- Typography: Inter & JetBrains Mono -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+
+  <!-- Core Theme, Layout, and Component Styles -->
+  <link rel="stylesheet" th:href="@{/css/theme.css}">
+  <link rel="stylesheet" th:href="@{/css/layout.css}">
+  <link rel="stylesheet" th:href="@{/css/components.css}">
+
+  <!-- Client Theme Switcher Manager -->
+  <script defer th:src="@{/js/theme.js}"></script>
+</head>
+<body></body>
+</html>

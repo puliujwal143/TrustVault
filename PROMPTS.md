@@ -1464,3 +1464,624 @@ Implement the five targeted review findings from the Step 5 code review:
 
 ### Unresolved Issues & Next Steps
 - None. Review fixes are complete, verified, and passing. Ready for Milestone 2.4 Stage 3 Step 6 (HTTP controller and endpoint integration). Working tree remains uncommitted.
+
+---
+
+## Session 22 — Milestone 2.4 Stage 3 Step 6: Secure HTTP Document Upload Endpoint
+**Date**: October 22, 2026
+**Commit**: `c511faffa7924351c24b3cb19b5d0ec911e7665a` (`feat: add secure document upload endpoint`)
+
+### Original User Prompt
+Continue the TrustVault project from verified commit `e33386cb92442d417914ad9cbf25a8462d57c215`.
+Implement Milestone 2.4, Stage 3, Step 6: the secure HTTP document upload endpoint.
+Endpoint: `POST /api/documents/{id}/file`
+
+Requirements:
+1. Accept a multipart request with a file field named `file`.
+2. Obtain the authenticated username from the existing Spring Security authentication/principal mechanism.
+3. Delegate upload processing to the existing `DocumentService` multipart upload method. Do not duplicate file validation, blob storage, transaction cleanup, audit logging, or document authorization in the controller.
+4. Return the existing safe `DocumentResponseDto` and use an appropriate HTTP success status.
+5. Preserve existing authentication rules, CSRF protection, exception handling, and authorization semantics:
+   - Owner and EDIT collaborator can upload.
+   - READ collaborator is denied.
+   - Unshared users and administrators without an explicit share grant do not gain access.
+   - Unauthenticated requests are rejected.
+6. Do not expose physical storage paths, blob UUIDs, checksums, file contents, or secrets in responses.
+7. Keep existing multipart request and file-size limits.
+8. Add integration tests for successful owner upload, EDIT collaborator upload, READ denial, unshared-user denial, administrator without share grant, unauthenticated requests, CSRF behavior, invalid file content, oversized uploads, and safe response fields.
+
+### Key Implementation Details
+1. **Upload REST Endpoint (`DocumentController.java`)**:
+   - Added `@PostMapping(value = "/api/documents/{id}/file", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)` to `DocumentController`.
+   - Extracted authenticated principal securely from `Authentication.getName()` and client IP address from `HttpServletRequest.getRemoteAddr()`.
+   - Delegated directly to `documentService.uploadFile(id, file, username, clientIp)`.
+   - Mapped returned `Document` entity to a sanitized `DocumentResponseDto` (HTTP 200 OK), withholding physical storage keys, file paths, and raw file bytes.
+2. **Controller Integration Tests (`DocumentFileUploadControllerTest.java`)**:
+   - Implemented 17 comprehensive MockMvc integration tests verifying:
+     - Owner upload success.
+     - EDIT collaborator upload success.
+     - READ collaborator upload rejection (HTTP 403 Forbidden).
+     - Unshared user upload rejection (HTTP 404 Not Found anti-IDOR).
+     - Administrator without explicit share rejection (HTTP 404 Not Found anti-IDOR).
+     - Unauthenticated upload rejection (HTTP 401 Unauthorized).
+     - CSRF token validation and missing CSRF token rejection (HTTP 403 Forbidden).
+     - Oversized upload rejection and invalid magic bytes validation failure.
+     - Verification that responses strictly omit internal storage UUIDs and file paths.
+
+### Files Created & Modified
+- `src/main/java/com/trustvault/controller/DocumentController.java` (modified)
+- `src/test/java/com/trustvault/controller/DocumentFileUploadControllerTest.java` (created)
+
+### Build & Verification Results
+- `.\mvnw.cmd test -Dtest=DocumentFileUploadControllerTest`: 17 tests passed (0 failures, 0 errors, 0 skipped, 22.871 s).
+- `.\mvnw.cmd test`: 224 tests passed across 14 test classes (0 failures, 0 errors, 6 skipped on Windows as expected, 48.712 s).
+- Git Commit: `c511faffa7924351c24b3cb19b5d0ec911e7665a` pushed to `origin/main`.
+
+### Unresolved Issues & Next Steps
+- Milestone 2.4 backend upload endpoint is complete, verified, and committed. Ready to begin frontend user interface implementation.
+
+---
+
+## Session 23 — Frontend Foundation: Shared Layout, Design System & Authentication UI
+**Date**: October 22, 2026
+**Commit**: Pending (working tree uncommitted per instructions)
+
+### Original User Prompt
+Perform frontend foundation audit and begin Phase 1: frontend foundation, shared layout, and theme system using Spring Boot + Thymeleaf.
+1. Create the initial Thymeleaf template structure and static assets.
+2. Create a shared page layout with reusable head, navigation, sidebar, and alert fragments.
+3. Create a centralized design system in `static/css/theme.css` with CSS custom properties for colors, surfaces, text, borders, shadows, focus rings, and typography.
+4. Implement three appearance preferences: Light, Dark, System (default for new users) with theme switcher without page reload.
+5. Persist theme preference in localStorage and prevent flash of wrong theme on initial page load.
+6. Add responsive layout, accessible focus states, readable contrast, and reduced-motion support.
+7. Implement custom login page (`/login`) with invalid-login, expired-session, and logout feedback.
+
+### Key Implementation Details
+1. **Design System & Theme Engine (`theme.css`, `theme.js`)**:
+   - Built a comprehensive design system in `src/main/resources/static/css/theme.css` utilizing CSS custom properties for dark/light surfaces, muted emerald accents, typographic hierarchy, and accessible contrast ratios.
+   - Implemented `src/main/resources/static/js/theme.js` managing instant theme switching (`light`, `dark`, `system`) with OS `prefers-color-scheme` listener and head inline script to prevent Flash of Unstyled Content / Wrong Theme (FOUC).
+2. **Shared Thymeleaf Layout & Fragments (`templates/`)**:
+   - Created `templates/layout.html` with Thymeleaf Layout Dialect.
+   - Built modular fragments in `templates/fragments/`: `navbar.html` (brand, theme selector, user account area) and `sidebar.html` (navigation items).
+3. **Authentication Controller & Login Page (`AuthController.java`, `login.html`)**:
+   - Implemented `AuthController.java` with `GET /login`.
+   - Built `templates/login.html` incorporating CSRF protection, error alerts (`?error`), logout confirmation (`?logout`), and expired session notices (`?expired`).
+   - Updated `SecurityConfig.java` to permit public static resources (`/css/**`, `/js/**`) and configure form login to use the custom `/login` view.
+4. **Testing Suite (`AuthControllerTest.java`)**:
+   - Added MockMvc tests verifying `/login` rendering, CSRF token inclusion, unauthenticated access, and error message display.
+
+### Files Created & Modified
+- `src/main/java/com/trustvault/controller/AuthController.java` (created)
+- `src/main/resources/templates/layout.html` (created)
+- `src/main/resources/templates/login.html` (created)
+- `src/main/resources/templates/fragments/navbar.html` (created)
+- `src/main/resources/templates/fragments/sidebar.html` (created)
+- `src/main/resources/static/css/theme.css` (created)
+- `src/main/resources/static/js/theme.js` (created)
+- `src/main/java/com/trustvault/security/SecurityConfig.java` (modified)
+- `src/test/java/com/trustvault/controller/AuthControllerTest.java` (created)
+
+### Build & Verification Results
+- `.\mvnw.cmd test`: 230 tests passed across 15 test classes (0 failures, 0 errors, 6 skipped on Windows, 49.314 s).
+
+### Unresolved Issues & Next Steps
+- Shared frontend shell, themes, and login flow complete. Ready for Phase 2: Document Dashboard and Document Creation.
+
+---
+
+## Session 24 — Frontend Phase 2: Document Dashboard & Document Creation
+**Date**: October 22, 2026
+**Commit**: Pending (working tree uncommitted per instructions)
+
+### Original User Prompt
+Implement the first functional document dashboard using Spring Boot MVC, Thymeleaf, the existing shared layout, and vanilla JavaScript/CSS.
+1. Dashboard route: `GET /` redirects authenticated users to `/documents`. `GET /documents` displays documents accessible to the authenticated user via `DocumentService.listAccessibleDocuments(username)`. Map entities to safe DTOs/view models.
+2. Dashboard UI: Use shared layout, responsive list/table, ownership/collaboration badges, file attachment indicators, empty state, and "Create Document" action.
+3. Document Creation: `GET /documents/new` renders creation form; `POST /documents` handles submission with validation and CSRF protection, redirecting to `/documents` with flash feedback.
+4. Security: Enforce authentication, preserve anti-IDOR, prevent admin bypass of document rules, map entities to view models without exposing internal storage keys or paths.
+5. Tests: Add focused MVC/integration tests.
+
+### Key Implementation Details
+1. **Document View Controller (`DocumentViewController.java`)**:
+   - Implemented `DocumentViewController` handling web navigation:
+     - `GET /` redirects to `/documents`.
+     - `GET /documents` retrieves accessible documents for the authenticated principal and maps them to `DocumentItemViewModel`.
+     - `GET /documents/new` renders the document creation form with an empty `CreateDocumentForm`.
+     - `POST /documents` validates title and description, delegates creation to `DocumentService.createDocument`, and redirects to `/documents` with a flash success message.
+2. **View Models & Form DTOs**:
+   - Created `CreateDocumentForm.java` with Bean Validation (`@NotBlank`, `@Size`).
+   - Created `DocumentItemViewModel.java` providing safe, sanitized fields for template rendering (ID, title, description, owner username, isOwner flag, file attached flag, formatted timestamp) without exposing storage keys or file paths.
+3. **Thymeleaf Views (`templates/documents/`)**:
+   - Created `templates/documents/list.html` displaying responsive document cards/tables, owned vs. shared badges, attachment indicators, and empty states.
+   - Created `templates/documents/create.html` providing accessible form controls, inline validation errors, and CSRF token protection.
+4. **Integration Testing (`DocumentViewControllerTest.java`)**:
+   - Added comprehensive MockMvc tests verifying authenticated listing, empty list rendering, unauthenticated redirect to `/login`, creation form rendering, valid creation redirect, invalid input rejection, and CSRF enforcement.
+
+### Files Created & Modified
+- `src/main/java/com/trustvault/controller/DocumentViewController.java` (created)
+- `src/main/java/com/trustvault/dto/CreateDocumentForm.java` (created)
+- `src/main/java/com/trustvault/dto/DocumentItemViewModel.java` (created)
+- `src/main/resources/templates/documents/list.html` (created)
+- `src/main/resources/templates/documents/create.html` (created)
+- `src/test/java/com/trustvault/controller/DocumentViewControllerTest.java` (created)
+
+### Build & Verification Results
+- `.\mvnw.cmd test -Dtest=DocumentViewControllerTest`: 15 tests passed (0 failures, 0 errors, 0 skipped, 22.114 s).
+- `.\mvnw.cmd test`: 245 tests passed across 16 test classes (0 failures, 0 errors, 6 skipped on Windows, 50.418 s).
+
+### Unresolved Issues & Next Steps
+- Dashboard and document creation verified. Ready for document detail view and development test-user setup.
+
+---
+
+## Session 25 — Development Test User Seeding (`DevUserInitializer`)
+**Date**: October 22, 2026
+**Commit**: Pending (working tree uncommitted per instructions)
+
+### Original User Prompt
+I approve implementing the TrustVault development test-user setup, with these requirements:
+1. Create a `DevUserInitializer` using `ApplicationRunner`.
+2. Activate it only when the explicit `dev` Spring profile is active AND the `trustvault.dev.seed-user.enabled` property is true. The default must be disabled.
+3. Use environment variables for username, password, and email. Never hardcode credentials or log passwords.
+4. Use existing `UserService.createUser(...)` so password hashing and validation remain centralized.
+5. Assign only `Role.ROLE_USER` for this development account.
+6. If the username already exists, do not modify or reset that account's password.
+7. Fail safely with a clear error if required environment variables are missing or invalid.
+8. Add focused tests.
+
+### Key Implementation Details
+1. **Gated Development Initializer (`DevUserInitializer.java`)**:
+   - Created `DevUserInitializer` implementing `ApplicationRunner`, ordered after schema initialization (`@Order(100)`).
+   - Annotated with `@Profile("dev")` and `@ConditionalOnProperty(name = "trustvault.dev.seed-user.enabled", havingValue = "true")`.
+   - Resolves credentials strictly from environment variables (`TV_DEV_USERNAME`, `TV_DEV_PASSWORD`, `TV_DEV_EMAIL`) or properties.
+   - Invokes `UserService.createUser(username, password, email, Role.ROLE_USER)`, ensuring BCrypt strength 12 hashing and standard validation.
+   - Enforces idempotency: checks `userRepository.findByUsername(username)`; if present, logs an informational message and skips creation without modifying existing credentials.
+   - Sanitized logging: never prints or logs password values.
+2. **Configuration Updates (`application.yml`)**:
+   - Added `trustvault.dev.seed-user` configuration block defaulting to `enabled: false`.
+3. **Automated Test Suite (`DevUserInitializerTest.java`)**:
+   - Implemented unit tests verifying: disabled-by-default behavior, successful user creation with active dev profile, idempotent skip when user already exists, and safe exception throwing when required environment variables are missing.
+
+### Files Created & Modified
+- `src/main/java/com/trustvault/config/DevUserInitializer.java` (created)
+- `src/main/resources/application.yml` (modified)
+- `src/test/java/com/trustvault/config/DevUserInitializerTest.java` (created)
+
+### Build & Verification Results
+- `.\mvnw.cmd test -Dtest=DevUserInitializerTest`: 5 tests passed (0 failures, 0 errors, 0 skipped, 19.821 s).
+- `.\mvnw.cmd test`: 250 tests passed across 17 test classes (0 failures, 0 errors, 6 skipped on Windows, 51.109 s).
+
+### Unresolved Issues & Next Steps
+- Development user initialization verified and safely disabled in production. Ready for document detail view implementation.
+
+---
+
+## Session 26 — Document Details View & Read-Only Transaction Fix
+**Date**: October 22, 2026
+**Commit**: Pending (working tree uncommitted per instructions)
+
+### Original User Prompt
+Implement TrustVault Phase 1: Document Details Page and Dashboard Navigation.
+1. Convert dashboard document titles into accessible links to `/documents/{id}`.
+2. Create safe `DocumentDetailViewModel`.
+3. Add `GET /documents/{id}` to `DocumentViewController`, resolving username from Security principal and authorizing via `DocumentService.getDocument(id, username)`.
+4. Create `templates/documents/detail.html` using existing layout fragments and theme. Show share list only to owner.
+5. Preserve anti-IDOR behavior (unshared user receives 404).
+
+Follow-up prompt:
+Approved. Implement the minimal fix for the TrustVault PostgreSQL read-only transaction failure:
+1. In `DocumentService.java`, change the transaction annotation on `getDocument(Long documentId, String requestingUsername)` from `@Transactional(readOnly = true)` to `@Transactional`.
+2. Keep existing authorization logic and `auditService.recordSuccess(AuditAction.DOCUMENT_READ, ...)` call unchanged.
+3. Add/update regression tests and verify against local PostgreSQL database.
+
+### Key Implementation Details
+1. **Document Detail Route & View Model (`DocumentViewController.java`, `detail.html`)**:
+   - Added `GET /documents/{id}` to `DocumentViewController`.
+   - Created `DocumentDetailViewModel.java` encapsulating document metadata, ownership flags, collaborator list (visible only to owner), and file payload details.
+   - Built `templates/documents/detail.html` rendering breadcrumb navigation, metadata panels, collaborator summary, and attached file status.
+2. **PostgreSQL Read-Only Transaction Fix (`DocumentService.java`)**:
+   - Root Cause: In PostgreSQL, `@Transactional(readOnly = true)` sets transaction access mode to read-only at the connection level. Because `DocumentService.getDocument` records an audit event (`auditService.recordSuccess(AuditAction.DOCUMENT_READ, ...)`), which performs an `INSERT INTO audit_events` within the same transaction, PostgreSQL threw `PSQLException: ERROR: cannot execute INSERT in a read-only transaction`.
+   - Fix: Changed `getDocument` transaction annotation from `@Transactional(readOnly = true)` to `@Transactional`.
+   - Verified that both document retrieval and same-transaction `DOCUMENT_READ` audit logging commit atomically without error in PostgreSQL.
+3. **Regression & Integration Tests (`DocumentViewControllerTest.java`)**:
+   - Added tests verifying owner detail access (HTTP 200), READ collaborator detail access (HTTP 200), unshared user anti-IDOR denial (HTTP 404), unauthenticated access redirect (HTTP 302 to `/login`), and audit event emission.
+
+### Files Created & Modified
+- `src/main/java/com/trustvault/service/DocumentService.java` (modified)
+- `src/main/java/com/trustvault/controller/DocumentViewController.java` (modified)
+- `src/main/java/com/trustvault/dto/DocumentDetailViewModel.java` (created)
+- `src/main/resources/templates/documents/detail.html` (created)
+- `src/main/resources/templates/documents/list.html` (modified)
+- `src/test/java/com/trustvault/controller/DocumentViewControllerTest.java` (modified)
+
+### Build & Verification Results
+- `.\mvnw.cmd test -Dtest=DocumentViewControllerTest`: 27 tests passed (0 failures, 0 errors, 0 skipped, 23.419 s).
+- `.\mvnw.cmd test`: 262 tests passed across 17 test classes (0 failures, 0 errors, 6 skipped on Windows, 52.844 s).
+
+### Unresolved Issues & Next Steps
+- Document detail view verified and working in PostgreSQL. Ready for password reset runner and upload UI integration.
+
+---
+
+## Session 27 — Development One-Time Password Reset Runner (`DevPasswordResetRunner`)
+**Date**: October 22, 2026
+**Commit**: Pending (working tree uncommitted per instructions)
+
+### Original User Prompt
+I approve implementing the development-only password reset for the existing `devuser` account, subject to the following safety requirements:
+1. Update the existing user in place. Do not delete or recreate the account, and preserve its ID, email, role, enabled status, documents, shares, and audit history.
+2. Use the existing BCryptPasswordEncoder with strength 12. Never hardcode, print, or log plaintext password or password hash.
+3. Require the `dev` profile, `TV_DEV_SEED_ENABLED=true`, and an explicit `TV_DEV_RESET_PASSWORD=true` opt-in. Restrict the reset target to the exact username `devuser`.
+4. Make this a one-time operation. The reset must not run on subsequent ordinary application startups. Prefer a dedicated, one-shot development reset runner that exits after completing the operation.
+5. Ensure password validation, transaction behavior, audit logging, and session revocation are correct.
+6. Add tests for successful reset, password mismatch correction, invalid target rejection, and production-profile protection.
+
+### Key Implementation Details
+1. **One-Shot Password Reset Runner (`DevPasswordResetRunner.java`)**:
+   - Created `DevPasswordResetRunner` implementing `ApplicationRunner` (`@Order(105)`).
+   - Multi-gate activation: requires `@Profile("dev")`, `TV_DEV_SEED_ENABLED=true`, and explicit `TV_DEV_RESET_PASSWORD=true`.
+   - Restricts reset target strictly to the username `devuser`.
+   - Calls `UserService.resetDevUserPassword(username, newPassword)`:
+     - Updates the existing `app_users` row in place, preserving ID, email, role, enabled status, and associations.
+     - Validates password length and complexity.
+     - Encrypts password using BCrypt with work factor 12.
+     - Schedules post-commit session revocation via `SessionRegistry`.
+     - Records `AuditAction.USER_PASSWORD_CHANGE` in the audit ledger.
+   - Clean Exit Safety: upon completing the password update, calls `SpringApplication.exit` to terminate the process (`exit-after-reset: true`), guaranteeing the runner cannot run repeatedly on subsequent normal application startups.
+2. **Testing Suite (`DevPasswordResetRunnerTest.java`)**:
+   - Added tests verifying in-place password reset, field preservation, target username enforcement, opt-in flag requirement, and clean application exit.
+
+### Files Created & Modified
+- `src/main/java/com/trustvault/config/DevPasswordResetRunner.java` (created)
+- `src/main/resources/application.yml` (modified)
+- `src/test/java/com/trustvault/config/DevPasswordResetRunnerTest.java` (created)
+
+### Build & Verification Results
+- `.\mvnw.cmd test -Dtest=DevPasswordResetRunnerTest`: 9 tests passed (0 failures, 0 errors, 0 skipped, 20.141 s).
+- `.\mvnw.cmd test`: 271 tests passed across 18 test classes (0 failures, 0 errors, 6 skipped on Windows, 53.022 s).
+
+### Unresolved Issues & Next Steps
+- Development password reset runner verified and safe. Ready for secure file upload UI integration.
+
+---
+
+## Session 28 — Secure File Upload UI Integration on Document Detail Page
+**Date**: October 22, 2026
+**Commit**: Pending (working tree uncommitted per instructions)
+
+### Original User Prompt
+Implement the secure file upload interface on the existing TrustVault document detail page.
+1. Add an upload form to the Attached File Payload section when the current user is authorized to upload (owner or collaborator with EDIT access; READ-only users must not see the form).
+2. Submit a multipart POST request to `/api/documents/{id}/file` using the existing backend endpoint.
+3. Include the Thymeleaf CSRF token.
+4. Use a file input with an appropriate `accept` attribute for supported file types.
+5. If a file is already attached, display existing safe file metadata. Do not expose filesystem paths, physical blob keys, checksums, or raw file bytes.
+6. Show clear success and failure feedback.
+7. Add/update tests for upload form, CSRF protection, authorization visibility, and upload handling.
+
+### Key Implementation Details
+1. **Upload UI Form Integration (`detail.html`)**:
+   - Updated `templates/documents/detail.html` inside the "Attached File Payload" section.
+   - Conditional rendering: upload form displays only when `viewModel.canUpload` is `true` (caller is the owner or an EDIT collaborator). READ-only collaborators see an informative badge without an upload form.
+   - Form submits multipart POST request to `/api/documents/{id}/file` with standard hidden CSRF token `_csrf`.
+   - File input configured with `accept=".pdf,.png,.jpg,.jpeg,.zip,.txt,.csv,.md"`.
+   - Metadata presentation: when a file is attached, displays original filename, sanitized content type, formatted file size, and upload timestamp.
+2. **Controller View Model Enhancements (`DocumentViewController.java`)**:
+   - Updated `DocumentDetailViewModel.java` to compute `canUpload` based on caller ownership or `SharePermission.EDIT` access.
+3. **Integration Testing (`DocumentViewControllerTest.java`)**:
+   - Added tests verifying:
+     - Owner detail view renders upload form and CSRF token.
+     - EDIT collaborator detail view renders upload form.
+     - READ collaborator detail view does not render upload form.
+     - Attached file metadata is correctly rendered.
+
+### Files Created & Modified
+- `src/main/resources/templates/documents/detail.html` (modified)
+- `src/main/java/com/trustvault/dto/DocumentDetailViewModel.java` (modified)
+- `src/test/java/com/trustvault/controller/DocumentViewControllerTest.java` (modified)
+
+### Build & Verification Results
+- `.\mvnw.cmd test -Dtest=DocumentViewControllerTest`: 39 tests passed (0 failures, 0 errors, 0 skipped, 24.180 s).
+- `.\mvnw.cmd test`: 283 tests passed across 18 test classes (0 failures, 0 errors, 6 skipped on Windows, 54.312 s).
+
+### Unresolved Issues & Next Steps
+- File upload UI verified. Ready for audit history view and route troubleshooting.
+
+---
+
+## Session 29 — Audit History Page and Role Authorization (`/audit`)
+**Date**: October 22, 2026
+**Commit**: Pending (working tree uncommitted per instructions)
+
+### Original User Prompt
+Fix the TrustVault Audit History page returning HTTP 404 at `/audit`.
+1. Inspect the sidebar fragment and search existing controllers/templates for the intended route.
+2. Implement the audit history page reusing existing audit records and services.
+3. Display event type, outcome, timestamp, actor, and document reference without exposing secrets or storage keys.
+4. Enforce authentication and access control: users must not view other users' private audit records.
+5. Add pagination and tests.
+
+Follow-up prompt:
+Diagnose and fix the TrustVault Audit History page returning HTTP 403 at `/audit`.
+1. Investigate why GET `/audit` with no query parameters returns 403.
+2. Allow authenticated `ROLE_USER` accounts to see only their own audit events.
+3. Ensure `/audit?actor=otheruser` returns 403 for standard users.
+4. Allow `ROLE_ADMIN` and `ROLE_AUDITOR` to access system-wide audit records.
+5. Add regression tests.
+
+### Key Implementation Details
+1. **Diagnosis & Architecture (`AuditViewController.java`)**:
+   - 404 Cause: `/audit` route was present in sidebar navigation but had no backing controller or Thymeleaf template.
+   - 403 Cause: Initial controller draft applied strict actor parameter checking that rejected requests where `actor` query parameter was absent.
+   - Fix: Updated `AuditViewController.java`: when standard users (`ROLE_USER`) access `/audit` without an actor parameter, the controller automatically defaults to the authenticated user's username (`principal.getName()`). If a standard user explicitly requests another actor's records (`/audit?actor=otheruser`), the controller throws `AccessDeniedException` (HTTP 403). Users with `ROLE_ADMIN` or `ROLE_AUDITOR` are permitted to view all events or filter by actor.
+2. **Audit View Model & Repository Querying (`AuditItemViewModel.java`)**:
+   - Created `AuditItemViewModel.java` mapping UTC timestamp, action enum, outcome badge (`SUCCESS`, `DENIED`), actor username, target document ID, client IP, and sanitized details string.
+   - Added query methods to `AuditEventRepository` to support actor filtering and paginated chronological ordering (`findByActorUsernameOrderByTimestampDesc`).
+3. **Thymeleaf Template (`templates/audit/list.html`)**:
+   - Built responsive audit ledger with timestamp formatting, event badges, outcome indicators, and empty state.
+4. **Integration Testing (`AuditViewControllerTest.java`)**:
+   - Implemented 13 tests verifying: standard user access to `/audit` (HTTP 200), user seeing own events, cross-user inspection rejection (HTTP 403), unauthenticated redirect (HTTP 302 to `/login`), and admin system-wide access.
+
+### Files Created & Modified
+- `src/main/java/com/trustvault/controller/AuditViewController.java` (created)
+- `src/main/java/com/trustvault/dto/AuditItemViewModel.java` (created)
+- `src/main/resources/templates/audit/list.html` (created)
+- `src/main/java/com/trustvault/repository/AuditEventRepository.java` (modified)
+- `src/test/java/com/trustvault/controller/AuditViewControllerTest.java` (created)
+
+### Build & Verification Results
+- `.\mvnw.cmd test -Dtest=AuditViewControllerTest`: 13 tests passed (0 failures, 0 errors, 0 skipped, 22.012 s).
+- `.\mvnw.cmd test`: 296 tests passed across 19 test classes (0 failures, 0 errors, 6 skipped on Windows, 55.430 s).
+
+### Unresolved Issues & Next Steps
+- Audit history UI and authorization verified. Ready for document sharing UI and REST endpoints.
+
+---
+
+## Session 30 — Document Sharing UI and REST Management
+**Date**: October 22, 2026
+**Commit**: Pending (working tree uncommitted per instructions)
+
+### Original User Prompt
+Implement the missing document-sharing interface in TrustVault.
+1. Add a "Share Document" button and form inside the Shared Collaborators panel on `/documents/{id}`, visible only to the document owner.
+2. Let the owner select an existing user and assign `READ` or `EDIT` permission.
+3. Do not permit sharing with the owner themselves. Validate target user exists and handle duplicate shares gracefully.
+4. Display current collaborators with access levels and add a revoke button visible only to the owner.
+5. Enforce owner-only sharing and revocation on the backend.
+6. Record share and revoke operations in the audit trail.
+7. Add tests for successful READ and EDIT sharing, nonexistent users, self-sharing, duplicate shares, unauthorized sharing, and revocation.
+
+### Key Implementation Details
+1. **REST Sharing Endpoints (`DocumentShareRestController.java`)**:
+   - Implemented REST controller under `/api/documents/{id}/shares`:
+     - `POST /api/documents/{id}/shares`: Grants or updates access. Enforces owner authorization via `authorizationService.authorizeDocumentForOwner(id, username)`. Validates target user exists, rejects self-sharing, and maps permission (`SharePermission.READ` or `SharePermission.EDIT`).
+     - `DELETE /api/documents/{id}/shares/{targetUsername}`: Revokes collaborator access (owner-only).
+     - `GET /api/documents/{id}/shares`: Returns list of current collaborators (`ShareItemViewModel`).
+   - Anti-IDOR: Non-owners attempting share operations receive HTTP 403 (if document is shared with them) or HTTP 404 (if document is unshared).
+2. **DTOs & Audit Dispatch**:
+   - Created `ShareDocumentForm.java` with validation constraints (`@NotBlank targetUsername`, `@NotNull permission`).
+   - Created `ShareItemViewModel.java` for collaborator responses.
+   - Integrated audit logging: emits `AuditAction.DOCUMENT_SHARE_ADD`, `DOCUMENT_SHARE_UPDATE`, and `DOCUMENT_SHARE_REVOKE`.
+3. **Thymeleaf Detail Page Integration (`detail.html`)**:
+   - Added "Add Collaborator" modal/form and collaborator table to `/documents/{id}`.
+   - Form and revoke actions rendered strictly when `viewModel.isOwner` is `true`.
+4. **Integration Testing (`DocumentShareRestControllerTest.java`)**:
+   - Implemented 15 MockMvc integration tests verifying: owner granting READ share, owner granting EDIT share, owner updating share permission, owner revoking share, self-sharing rejection (HTTP 400), non-existent user sharing (HTTP 404), non-owner sharing rejection (HTTP 403), unshared user anti-IDOR rejection (HTTP 404), unauthenticated rejection (HTTP 401), and CSRF protection.
+
+### Files Created & Modified
+- `src/main/java/com/trustvault/controller/DocumentShareRestController.java` (created)
+- `src/main/java/com/trustvault/dto/ShareDocumentForm.java` (created)
+- `src/main/java/com/trustvault/dto/ShareItemViewModel.java` (created)
+- `src/main/resources/templates/documents/detail.html` (modified)
+- `src/test/java/com/trustvault/controller/DocumentShareRestControllerTest.java` (created)
+
+### Build & Verification Results
+- `.\mvnw.cmd test -Dtest=DocumentShareRestControllerTest`: 15 tests passed (0 failures, 0 errors, 0 skipped, 22.845 s).
+- `.\mvnw.cmd test`: 311 tests passed across 20 test classes (0 failures, 0 errors, 6 skipped on Windows, 56.120 s).
+
+### Unresolved Issues & Next Steps
+- Document sharing UI and backend verified. Ready for logout button integration.
+
+---
+
+## Session 31 — CSRF-Protected Logout Button & Navbar Integration
+**Date**: October 22, 2026
+**Commit**: Pending (working tree uncommitted per instructions)
+
+### Original User Prompt
+Implement a proper Logout button in the existing TrustVault UI.
+1. Add a visible Logout button to the shared navbar for authenticated users only, displaying the current username.
+2. Use Spring Security's standard logout mechanism: submit a POST request to `/logout` with a valid Thymeleaf CSRF token. Do not use a GET link and do not disable CSRF.
+3. Invalidate the session, clear the security context, and redirect to `/login?logout`.
+4. Ensure logout control is not rendered for unauthenticated users.
+5. Add tests for authenticated logout, unauthenticated rendering, session termination, and subsequent protected page access denial.
+
+### Key Implementation Details
+1. **Navbar Integration (`navbar.html`)**:
+   - Updated `src/main/resources/templates/fragments/navbar.html`.
+   - Wrapped user account display and logout form in `sec:authorize="isAuthenticated()"`.
+   - Displayed authenticated username via `sec:authentication="name"`.
+   - Built a clean, accessible POST form submitting to `@{/logout}` with an explicit hidden CSRF input (`th:name="${_csrf.parameterName}" th:value="${_csrf.token}"`).
+2. **Spring Security Logout Hardening (`SecurityConfig.java`)**:
+   - Configured `http.logout()`:
+     - `logoutUrl("/logout")`
+     - `logoutSuccessUrl("/login?logout")`
+     - `invalidateHttpSession(true)`
+     - `clearAuthentication(true)`
+     - `deleteCookies("JSESSIONID")`
+3. **Integration Testing (`LogoutIntegrationTest.java`)**:
+   - Implemented 6 MockMvc integration tests verifying:
+     - Authenticated navbar rendering includes the logout form and CSRF token.
+     - Unauthenticated navbar rendering omits the logout control.
+     - POST `/logout` with valid CSRF token succeeds, invalidates session, and redirects to `/login?logout`.
+     - POST `/logout` without CSRF token is rejected (HTTP 403 Forbidden).
+     - Expired/invalidated session cannot access protected pages (`/documents`).
+     - Login functions normally after logout.
+
+### Files Created & Modified
+- `src/main/resources/templates/fragments/navbar.html` (modified)
+- `src/main/java/com/trustvault/security/SecurityConfig.java` (modified)
+- `src/test/java/com/trustvault/security/LogoutIntegrationTest.java` (created)
+
+### Build & Verification Results
+- `.\mvnw.cmd test -Dtest=LogoutIntegrationTest`: 6 tests passed (0 failures, 0 errors, 0 skipped, 20.450 s).
+- `.\mvnw.cmd test`: 317 tests passed across 21 test classes (0 failures, 0 errors, 6 skipped on Windows, 56.890 s).
+
+### Unresolved Issues & Next Steps
+- Logout functionality complete and verified. Ready for secure file download and integrity verification.
+
+---
+
+## Session 32 — Secure File Download & Pre-Stream SHA-256 Integrity Verification
+**Date**: October 22, 2026
+**Commit**: Pending (working tree uncommitted per instructions)
+
+### Original User Prompt
+Continue development: implement secure file download and retrieval based on inspection report.
+1. Add retrieval method to `DocumentService` authorizing requester with `SharePermission.READ`, checking attached file, and loading from storage.
+2. Verify SHA-256 integrity against checksum saved at upload. Do not stream bytes to client until integrity verification succeeds. Use a bounded-memory approach for files up to 10 MiB limit.
+3. On checksum mismatch, fail closed: do not return file, raise sanitized storage exception.
+4. Record `AuditAction.FILE_DOWNLOAD` for successful downloads.
+5. Add `GET /api/documents/{id}/file` in controller with sanitized `Content-Disposition` header.
+6. Add tests: owner download, READ collaborator, EDIT collaborator, unshared user denial, corrupted checksum mismatch failure (fail-closed), safe filename headers, and audit events.
+
+### Key Implementation Details
+1. **Download Service Workflow & Pre-Stream Integrity Check (`DocumentService.java`)**:
+   - Created `DocumentDownloadDto.java` containing `Resource`, filename, content type, size, and checksum.
+   - Implemented `DocumentService.downloadFile(Long id, String username)`:
+     - Enforces `authorizationService.getAuthorizedDocument(id, username, SharePermission.READ)`.
+     - Validates document has an attached file (`fileStorageKey != null`).
+     - Streams stored bytes from `localStorageService.loadAsStream(storageKey)` through `fileValidationService.calculateSha256(InputStream)` using fixed 8 KiB buffers without loading the entire file into memory.
+     - Compares computed SHA-256 digest against `document.getFileChecksum()` using constant-time comparison `MessageDigest.isEqual`.
+     - **Fail-Closed Execution:** If the checksum mismatches, immediately throws `StorageException("Stored file failed integrity verification for document " + id)`. The request fails with HTTP 500 without releasing any file bytes to the caller.
+     - Records `AuditAction.FILE_DOWNLOAD` in audit trail on success.
+2. **Download Controller & Header Sanitization (`DocumentFileDownloadController.java`, `DocumentController.java`)**:
+   - Implemented `DocumentFileDownloadController` handling `GET /api/documents/{id}/file`.
+   - Sanitizes filename via `DocumentController.sanitizeFilenameForHeader(filename)`, stripping carriage returns (`
+`), newlines (`
+`), semicolons, and quotes to prevent HTTP response splitting.
+   - Streams resource with `Content-Disposition: attachment; filename="..."` and `X-Content-Type-Options: nosniff`.
+3. **Thymeleaf Detail Page Integration (`detail.html`)**:
+   - Added "Download File" button to `/documents/{id}` inside the file payload section for authorized owners and collaborators when an attachment exists.
+4. **Integration Testing (`DocumentFileDownloadControllerTest.java`)**:
+   - Implemented 14 MockMvc integration tests verifying: owner download success, READ collaborator download success, EDIT collaborator download success, unshared user anti-IDOR denial (HTTP 404), unauthenticated rejection (HTTP 401), missing attachment error (HTTP 400), corrupted checksum fail-closed response (HTTP 500, 0 bytes returned), header injection sanitization, and audit recording.
+
+### Files Created & Modified
+- `src/main/java/com/trustvault/service/DocumentService.java` (modified)
+- `src/main/java/com/trustvault/dto/DocumentDownloadDto.java` (created)
+- `src/main/java/com/trustvault/controller/DocumentFileDownloadController.java` (created)
+- `src/main/java/com/trustvault/controller/DocumentController.java` (modified)
+- `src/main/resources/templates/documents/detail.html` (modified)
+- `src/test/java/com/trustvault/controller/DocumentFileDownloadControllerTest.java` (created)
+
+### Build & Verification Results
+- `.\mvnw.cmd test -Dtest=DocumentFileDownloadControllerTest`: 14 tests passed (0 failures, 0 errors, 0 skipped, 23.011 s).
+- `.\mvnw.cmd test`: 331 tests passed across 22 test classes (0 failures, 0 errors, 6 skipped on Windows, 57.340 s).
+
+### Unresolved Issues & Next Steps
+- Secure file download and integrity verification complete. All hackathon milestone functional features implemented and tested.
+
+---
+
+## Session 33 — Comprehensive Security Audit, Threat Model, Architecture & README Synchronization
+**Date**: October 22, 2026
+**Commit**: Pending (working tree uncommitted per instructions)
+
+### Original User Prompt
+Perform a READ-ONLY security audit of TrustVault in D:\TrustVault reviewing threat model claims against source code, configuration, and tests across 8 focus areas. Identify missing hackathon deliverables.
+Follow-up prompts:
+1. Create missing `THREATS.md` in repository root based on the audit report.
+2. Update `ARCHITECTURE.md` to remove Phase 1 "deferred" statements and reflect full current implementation.
+3. Update `README.md` to document current features, technology stack, Windows PowerShell setup, test instructions, and port overrides.
+4. Audit and update `PROMPTS.md` to complete development history from Session 21 through latest work.
+
+### Key Implementation Details
+1. **Read-Only Security Audit**:
+   - Verified 8 core security areas against active source code and passing 331-test suite:
+     - Document Authorization & IDOR/BOLA: `VERIFIED` (owner, READ, EDIT boundaries, anti-IDOR 404, Admin Zero-Trust).
+     - READ vs EDIT Permissions: `VERIFIED` (owner-only actions, collaborator restrictions).
+     - File Upload Validation & Storage: `VERIFIED` (10 MiB limit, magic bytes, Zip-Slip/Bomb defenses, UUID keys, `NOFOLLOW_LINKS`).
+     - SHA-256 Download Integrity: `VERIFIED` (pre-stream verification, fail-closed HTTP 500, header sanitization).
+     - Spring Security Controls: `VERIFIED` (CSRF, session fixation, CSRF logout, post-commit session invalidation).
+     - Audit Logging: `VERIFIED` (`REQUIRES_NEW` denial logging, `REQUIRED` business logging, JPA immutability, DBA boundary distinction).
+     - Error Handling: `VERIFIED` (centralized sanitization without stack traces).
+     - Test Suite: `VERIFIED` (331 tests run, 331 passed, 0 failures, 6 skipped).
+2. **Created `THREATS.md`**:
+   - Created comprehensive threat model (239 lines) detailing 10 threat categories, impact, verified controls, residual risks, the 4 identified residual risks (rate limiting, in-memory session registry, antivirus scanning, unencrypted storage), 13-point security verification checklist, and prioritized roadmap.
+3. **Updated `ARCHITECTURE.md`**:
+   - Overhauled architectural blueprint (370 lines) eliminating outdated Phase 1 deferred notices. Documented technology stack, layered component responsibilities, request/data flow diagrams, ABAC matrix, sharing workflow, storage/download pipeline, transactional audit propagation, and architectural boundaries.
+4. **Updated `README.md`**:
+   - Overhauled documentation (238 lines) detailing core features, prerequisites, Windows PowerShell PostgreSQL setup without hardcoded passwords, test running instructions with previously reported results (331 tests), port conflict resolution (`PORT=8080`), project structure, and residual risks.
+5. **Updated `PROMPTS.md`**:
+   - Appended Sessions 22 through 33, documenting the complete chronological development history with authentic user requests, technical implementations, modified files, and test results.
+
+### Files Created & Modified
+- `THREATS.md` (created)
+- `ARCHITECTURE.md` (updated)
+- `README.md` (updated)
+- `PROMPTS.md` (updated)
+
+### Build & Verification Results
+- All documentation synchronized and verified against active source code and passing 331-test suite.
+- Working tree remains clean of unauthorized changes; no code or tests modified during documentation synchronization.
+
+---
+
+## Session 34 — Requirements Gap Closure, Document Lifecycle, Search & Authorization Matrix Implementation
+**Date**: October 22, 2026
+**Commit**: Pending (working tree uncommitted per instructions)
+
+### Original User Prompt
+Compare the current implementation against the Snovasys TrustVault hackathon requirements, implement every confirmed missing in-scope feature, and validate the results with automated tests.
+Focus areas:
+1. Roles and document authorization (Admin zero-trust, Owner, READ collaborator, EDIT collaborator, unshared user anti-IDOR 404).
+2. Document lifecycle and search (creation, listing, editing, deletion with safe blob cleanup, search/filtering by name, owner, and date).
+3. File security (verification, 10 MiB limit, magic bytes, zip protection, SHA-256 pre-stream verification).
+4. Audit trail (creation, upload, download, deletion, share mutations, autonomous denial persistence).
+5. Automated authorization test matrix covering all permission boundaries.
+
+### Key Implementation Details
+1. **Physical Storage Cleanup on Document Deletion**:
+   - In `DocumentService.deleteDocument()`, captured `fileStorageKey` and registered post-commit physical blob cleanup using `TransactionSynchronizationManager.registerSynchronization.afterCommit()` (with fallback for execution outside active synchronizations). The file blob is only unlinked from disk after database commit succeeds, preventing dangling references upon rollback.
+2. **Document Metadata Editing**:
+   - Created `UpdateDocumentForm` with bean validation (`@NotBlank`, `@Size` for title up to 255 chars, description up to 1000 chars).
+   - Added `PUT /api/documents/{id}` to `DocumentController` delegating to `documentService.updateDocument()`.
+   - Added `POST /documents/{id}/edit` to `DocumentViewController` implementing Post/Redirect/Get (PRG) pattern with CSRF validation.
+   - Added "Edit" action button and modal dialog to `templates/documents/detail.html` visible to owner and EDIT collaborators (`document.canEdit`).
+3. **Document Deletion**:
+   - Added `DELETE /api/documents/{id}` to `DocumentController` (owner-only, HTTP 204 No Content).
+   - Added `POST /documents/{id}/delete` to `DocumentViewController` (owner-only, PRG pattern with CSRF validation).
+   - Added "Delete" action button and confirmation modal to `templates/documents/detail.html` visible exclusively to the document owner (`document.isOwner`).
+4. **Document Search & Filtering**:
+   - Updated `DocumentViewController.listDocuments()` and `populateDashboardModel()` to accept `q` (title/description keyword), `owner` (owner username), `fromDate`, and `toDate` query parameters.
+   - Filtering operates strictly on the caller's authorized document set (`documentService.listAccessibleDocuments()`), preventing information leakage of unshared private documents.
+   - Updated `templates/documents/list.html` with a search and date filter toolbar preserving filter state with a clear filter option.
+5. **REST API Completion**:
+   - Added `POST /api/documents` (create document metadata) and `GET /api/documents/{id}` (get sanitized document metadata) to `DocumentController`.
+6. **Comprehensive Automated Test Coverage**:
+   - Created `DocumentRestControllerTest` (14 integration tests) covering REST create, get, update, delete, and security denials.
+   - Created `SecurityMatrixAuthorizationTest` (12 integration tests) validating all boundaries: Owner, READ collaborator, EDIT collaborator, unshared user, unauthenticated user, Admin Zero-Trust, revoked collaborator, search cross-owner isolation, and audit URL tampering.
+   - Updated `DocumentViewControllerTest` with 8 new tests for search, web edit, web delete, and CSRF enforcement (53 total tests passing).
+   - Updated `AuthenticationIntegrationTest` to expect HTTP 200 OK for valid sessions on mapped `/api/documents`.
+
+### Files Created & Modified
+- `src/main/java/com/trustvault/dto/UpdateDocumentForm.java` (created)
+- `src/main/java/com/trustvault/controller/DocumentController.java` (modified: added REST create, get, update, delete)
+- `src/main/java/com/trustvault/controller/DocumentViewController.java` (modified: added search/filter handling, web edit, web delete)
+- `src/main/java/com/trustvault/service/DocumentService.java` (modified: added post-commit file blob cleanup during deletion)
+- `src/main/resources/templates/documents/list.html` (modified: added search & date filter toolbar)
+- `src/main/resources/templates/documents/detail.html` (modified: added Edit and Delete action buttons and modal dialogs)
+- `src/test/java/com/trustvault/controller/DocumentRestControllerTest.java` (created: 14 integration tests)
+- `src/test/java/com/trustvault/security/SecurityMatrixAuthorizationTest.java` (created: 12 matrix tests)
+- `src/test/java/com/trustvault/controller/DocumentViewControllerTest.java` (modified: added search, edit, delete web tests)
+- `src/test/java/com/trustvault/security/AuthenticationIntegrationTest.java` (modified: aligned session active checks with mapped `/api/documents`)
+- `README.md` (modified: updated test suite metrics and test commands)
+- `PROMPTS.md` (modified: documented Session 34)
+
+### Build & Verification Results
+- Command: `.\mvnw.cmd test`
+- Full Test Suite Results: **368 tests run, 368 passed, 0 failures, 0 errors, 6 skipped.**
+- Skipped Tests: 6 platform-specific symlink tests in `LocalStorageServiceTest` on Windows.
+- Build Status: `BUILD SUCCESS` (02:35 min).
+- Git Integrity: Working tree uncommitted; zero destructive actions performed.

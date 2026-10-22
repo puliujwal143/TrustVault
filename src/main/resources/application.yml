@@ -71,3 +71,14 @@ trustvault:
   storage:
     # Uploaded documents must NEVER be located in public static asset directories
     upload-dir: ${STORAGE_UPLOAD_DIR:./private-storage/uploads}
+  dev:
+    seed-user:
+      # Disabled by default; only active when 'dev' profile is enabled AND this is set to true
+      enabled: ${TV_DEV_SEED_ENABLED:false}
+      username: ${TV_DEV_USERNAME:}
+      password: ${TV_DEV_PASSWORD:}
+      email: ${TV_DEV_EMAIL:}
+    reset-password:
+      # Explicit one-time opt-in; only active when 'dev' profile is enabled AND this is set to true
+      enabled: ${TV_DEV_RESET_PASSWORD:false}
+      exit-after-reset: ${TV_DEV_RESET_EXIT_AFTER:true}

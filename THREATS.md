@@ -166,12 +166,13 @@ The primary assets requiring protection in TrustVault include:
 - **Potential Impact:** Immediate account compromise.
 - **Existing Verified Controls:**
   - User DTOs (`UserDto`) never include password fields.
-  - Password hashes are stored with BCrypt (strength 12) in `users.password_hash`.
+  - Password hashes are stored with BCrypt (strength 12) in `app_users.password`.
   - Development seed and reset mechanisms (`DevUserInitializer`, `DevPasswordResetRunner`) require explicit opt-in flags, are active only under the `dev` profile, and never print or log plaintext passwords.
+  - Offline hash generator (`PasswordHashGenerator`) reads passwords securely via `System.console().readPassword()` without terminal echoing or shell history capture.
   - `AuditService` strictly excludes passwords, tokens, and raw file bytes from audit log metadata.
 - **Residual Risk:**
   - Low. Credential hygiene is maintained across services, DTOs, and logs.
-- **Verification Status:** `VERIFIED` (Covered in `DevUserInitializerTest`, `UserServiceTest`, and audit tests).
+- **Verification Status:** `VERIFIED` (Covered in `DevUserInitializerTest`, `PasswordHashGeneratorTest`, `UserServiceTest`, and audit tests).
 
 ---
 
@@ -186,6 +187,37 @@ The primary assets requiring protection in TrustVault include:
 - **Residual Risk:**
   - **Missing Application-Level Rate Limiting:** High-frequency requests against `/login` or file endpoints are not throttled by the application.
 - **Verification Status:** `PARTIALLY VERIFIED` (File and memory bounds verified; rate limiting not implemented).
+
+### 4.11. Cloud Storage Provider & External Integration Threats
+
+- **Threat:** Interception of file bytes in transit, forgery of storage requests, credential leakage of shared secrets, or silent fallback to local storage leading to data loss on ephemeral container restarts.
+- **Potential Impact:** Unauthorized exposure of private documents during transfer, silent failure to persist production uploads, or credential exposure via logs and errors.
+- **Existing Verified Controls:**
+  - **HTTPS Transport Enforcement:** `ConvexStorageService.init()` validates that the configured base URL uses the HTTPS scheme and rejects insecure HTTP schemes, protecting file streams in transit with TLS.
+  - **Bearer Token Authorization:** All requests to Convex HTTP Actions (`/files/{storageKey}`) require authentication via the `Authorization: Bearer <secret>` header.
+  - **Secret Hygiene & Diagnostic Sanitization:** `ConvexStorageService` defensive parsing strips accidental quotes or `"Bearer "` prefixes. It employs an `ACCIDENTAL_SHELL_EXPRESSION` regex pattern to catch accidental shell expression leaks while cleanly accepting standard Base64 secrets with padding (`=`). Diagnostic logs completely redact secret tokens.
+  - **Strict Storage Provider Isolation (No Silent Fallback):** `LocalStorageService` is annotated with `@ConditionalOnProperty(name = "trustvault.storage.provider", havingValue = "local", matchIfMissing = true)`. When `trustvault.storage.provider=convex` is configured, `LocalStorageService` is completely disabled. If Convex storage fails, the system fails closed rather than silently writing sensitive documents to an ephemeral container filesystem.
+- **Residual Risk:**
+  - Trust boundary delegation: TrustVault delegates cloud blob durability and physical disk encryption to Convex's cloud infrastructure.
+- **Verification Status:** `VERIFIED` (Covered in `ConvexStorageServiceTest` [22 unit tests]).
+
+---
+
+### 4.12. Privilege Escalation & Unauthorized Administrative Account Provisioning
+
+- **Threat:** An attacker or rogue user registers an administrative account, elevates standard user privileges to `ROLE_ADMIN`, or exploits development test seeders in a production deployment.
+- **Potential Impact:** Full platform administrative takeover, access to all platform audit logs, unauthorized account deactivation or manipulation.
+- **Existing Verified Controls:**
+  - **Zero Public Registration / Self-Elevation Routes:** TrustVault exposes no public account registration or role modification HTTP endpoints.
+  - **Environment-Gated Seeding Scaffolding:** `DevUserInitializer` is annotated with `@Profile("dev")` and `@ConditionalOnProperty(name = "trustvault.dev.seed-user.enabled", havingValue = "true")`. It is physically absent from the Spring ApplicationContext in default and production deployments.
+  - **Strict Role Input Validation:** `DevUserInitializer` parses and validates `TV_DEV_ROLE` against the `Role` enum (`ROLE_USER`, `ROLE_ADMIN`). Unsupported or unapproved roles throw an exception and abort application startup before any user record is persisted.
+  - **Idempotent Collision Protection:** Seeding checks for both existing username and email collisions. If an account exists, creation is skipped, strictly preserving existing account credentials and roles without silent elevation or password resets.
+  - **Cryptographic Password Hashing:** All user creation passes through `UserService.createUser(...)`, which validates password complexity (>= 8 characters) and hashes passwords using `BCryptPasswordEncoder(12)`.
+  - **Offline Hash Generation for Production:** For day-zero production provisioning, the `PasswordHashGenerator` utility generates BCrypt-12 hashes offline using console masking, eliminating plaintext passwords from network transmissions, application logs, and shell histories.
+  - **Admin Zero-Trust Document Boundary:** In TrustVault, `ROLE_ADMIN` grants administrative and audit log inspection rights (`/audit`), but explicitly does **not** bypass document authorization. `DocumentAuthorizationService` strictly denies administrators access to private documents unless an explicit ownership or collaborator share grant exists.
+- **Residual Risk:**
+  - Privileged database administrators with direct SQL credentials to the Neon PostgreSQL database have out-of-band authority to alter user records directly. Direct database access must be guarded with least-privilege cloud IAM, MFA, and TLS encryption.
+- **Verification Status:** `VERIFIED` (Covered in `DevUserInitializerTest` [13 tests], `PasswordHashGeneratorTest` [2 tests], and `SecurityMatrixAuthorizationTest`).
 
 ---
 
@@ -206,10 +238,14 @@ The four key residual security risks identified in the audit and their operation
 
 The following test suites in `src/test/java/com/trustvault/` verify the security controls documented in this threat model:
 
+- [x] **Comprehensive Security Authorization Matrix (All Boundaries):** `com.trustvault.security.SecurityMatrixAuthorizationTest`
 - [x] **Document Authorization & IDOR Protection:** `com.trustvault.service.DocumentAuthorizationTest`
+- [x] **Document REST Controller Authorization & Lifecycle:** `com.trustvault.controller.DocumentRestControllerTest`
+- [x] **Document Web Controller, Search & Filtering:** `com.trustvault.controller.DocumentViewControllerTest`
 - [x] **File Upload Authorization & Rollback Safety:** `com.trustvault.service.DocumentFileUploadServiceTest`
 - [x] **File Validation, Magic Bytes & Zip-Slip/Bomb Defenses:** `com.trustvault.storage.FileValidationServiceTest`
 - [x] **Path Traversal & Storage Isolation:** `com.trustvault.storage.LocalStorageServiceTest`
+- [x] **Convex Cloud Storage Provider & Safe Validation:** `com.trustvault.storage.ConvexStorageServiceTest`
 - [x] **Upload Controller Permissions & Security:** `com.trustvault.controller.DocumentFileUploadControllerTest`
 - [x] **Download Controller Checksum Verification & Fail-Closed:** `com.trustvault.controller.DocumentFileDownloadControllerTest`
 - [x] **Sharing REST Controller Permissions & IDOR Defense:** `com.trustvault.controller.DocumentShareRestControllerTest`
@@ -220,7 +256,7 @@ The following test suites in `src/test/java/com/trustvault/` verify the security
 - [x] **Audit Immutability & Persistence:** `com.trustvault.repository.AuditEventPersistenceTest`
 - [x] **Exception Handling & Information Leakage Prevention:** `com.trustvault.exception.GlobalExceptionHandlerTest`
 
-*Test Suite Execution: 331 tests run, 331 passing, 0 failures, 0 errors, 6 platform-skipped.*
+*Test Suite Execution: 394 tests run, 394 passing, 0 failures, 0 errors, 6 platform-skipped.*
 
 ---
 

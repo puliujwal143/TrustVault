@@ -22,6 +22,7 @@ public record DocumentDetailViewModel(
         Long id,
         String title,
         String description,
+        String category,
         String ownerUsername,
         boolean isOwner,
         String permissionLabel,
@@ -36,6 +37,30 @@ public record DocumentDetailViewModel(
         Instant updatedAt,
         List<ShareItemViewModel> shares
 ) {
+    /**
+     * Backward-compatible 16-argument constructor for views initialized without category.
+     */
+    public DocumentDetailViewModel(
+            Long id,
+            String title,
+            String description,
+            String ownerUsername,
+            boolean isOwner,
+            String permissionLabel,
+            boolean canEdit,
+            boolean hasFile,
+            String fileOriginalName,
+            String fileContentType,
+            Long fileSize,
+            String formattedFileSize,
+            Instant fileUploadedAt,
+            Instant createdAt,
+            Instant updatedAt,
+            List<ShareItemViewModel> shares
+    ) {
+        this(id, title, description, null, ownerUsername, isOwner, permissionLabel, canEdit, hasFile, fileOriginalName, fileContentType, fileSize, formattedFileSize, fileUploadedAt, createdAt, updatedAt, shares);
+    }
+
     /**
      * Constructs a safe DocumentDetailViewModel from a Document entity, caller context, and optional shares.
      *
@@ -70,6 +95,7 @@ public record DocumentDetailViewModel(
                 doc.getId(),
                 doc.getTitle(),
                 doc.getDescription(),
+                doc.getCategory(),
                 ownerName,
                 isOwner,
                 resolvedPermission,

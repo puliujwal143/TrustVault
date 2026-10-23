@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS documents (
     storage_key UUID NOT NULL UNIQUE,
     title VARCHAR(255) NOT NULL,
     description VARCHAR(1000),
+    category VARCHAR(50),
     owner_id BIGINT NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -49,10 +50,12 @@ ALTER TABLE documents ADD COLUMN IF NOT EXISTS file_content_type VARCHAR(100);
 ALTER TABLE documents ADD COLUMN IF NOT EXISTS file_size BIGINT;
 ALTER TABLE documents ADD COLUMN IF NOT EXISTS file_checksum VARCHAR(64);
 ALTER TABLE documents ADD COLUMN IF NOT EXISTS file_uploaded_at TIMESTAMP WITH TIME ZONE;
+ALTER TABLE documents ADD COLUMN IF NOT EXISTS category VARCHAR(50);
 
 CREATE INDEX IF NOT EXISTS idx_documents_owner_id ON documents(owner_id);
 CREATE INDEX IF NOT EXISTS idx_documents_storage_key ON documents(storage_key);
 CREATE INDEX IF NOT EXISTS idx_documents_file_storage_key ON documents(file_storage_key);
+CREATE INDEX IF NOT EXISTS idx_documents_category ON documents(category);
 
 -- ------------------------------------------------------------------------------
 -- 3. Document Shares Table

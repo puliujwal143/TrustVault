@@ -10,14 +10,21 @@ For comprehensive threat modeling, vulnerability classifications, and risk asses
 
 TrustVault is engineered as a secure, defense-in-depth document management monolith. It employs a clean multi-tiered architecture with unidirectional layer dependencies, strict principle of least privilege, and decoupled storage mechanisms.
 
+- **Production Deployment:** [https://trustvault-axea.onrender.com](https://trustvault-axea.onrender.com)
+- **Deployment Platform:** Render (Docker runtime, multi-stage build, non-root system user)
+- **Cloud Database:** Neon PostgreSQL
+- **Cloud Storage:** Convex Cloud Storage (HTTP Actions)
+
 ### Core Technology Stack
 - **Runtime & Language:** Java 21 (LTS)
 - **Framework:** Spring Boot 3.3.5
 - **Security Engine:** Spring Security 6 (Form Login, Synchronizer Token CSRF, Session Fixation Migration, Concurrent Session Management, Role-Based & Attribute-Based Authorization)
 - **Persistence & ORM:** Spring Data JPA / Hibernate with PostgreSQL Dialect
-- **Database:** PostgreSQL 15+ (Relational store for user accounts, document metadata, sharing grants, and immutable audit events)
+- **Database:** PostgreSQL 15+ / Neon PostgreSQL (Relational store for user accounts, document metadata, sharing grants, and immutable audit events)
 - **Presentation Layer:** Thymeleaf 3 with Spring Security Layout Dialect (Server-side rendering, contextual authorization fragments, CSRF integration)
-- **Blob Storage Subsystem:** Local Private File Storage isolated outside the application document root
+- **Blob Storage Subsystem:** Pluggable `StorageService` interface with two implementations:
+  - `LocalStorageService`: Local private file storage isolated outside the application document root
+  - `ConvexStorageService`: Secure cloud document storage via Convex HTTP Actions with Bearer token authentication
 - **Build & Dependency Tooling:** Apache Maven with Maven Wrapper (`mvnw`)
 
 ---
@@ -59,18 +66,18 @@ The system is organized into distinct, decoupled architectural layers:
 └───────┬──────────────┬───────┘
         │              │
         ▼              ▼
-┌──────────────────┐ ┌───────────────────────────────────┐
-│ Repository Layer │ │      Private Storage Engine       │
-│ (Spring Data JPA)│ │      (LocalStorageService)        │
-│ - Param Queries  │ │ - Isolated ./private-storage/     │
-│ - Zero Raw SQL   │ │ - Nonce/UUID Key Decoupling       │
-│ - Scoped Selects │ │ - Path Traversal / Symlink Defense│
-└────────┬─────────┘ └─────────────────┬─────────────────┘
-         │                             │
-         ▼                             ▼
-┌──────────────────┐         ┌───────────────────┐
-│ PostgreSQL Store │         │ Physical OS Disk  │
-└──────────────────┘         └───────────────────┘
+┌──────────────────┐ ┌──────────────────────────────────────────────┐
+│ Repository Layer │ │            Storage Subsystem                 │
+│ (Spring Data JPA)│ │         (StorageService Interface)           │
+│ - Param Queries  │ │  ┌──────────────────────┬──────────────────┐ │
+│ - Zero Raw SQL   │ │  │ LocalStorageService  │ConvexStorageServ.│ │
+│ - Scoped Selects │ │  │ (./private-storage/) │ (Convex HTTPS)   │ │
+└────────┬─────────┘ └──┴───────────┬──────────┴────────┬─────────┴─┘
+         │                          │                   │
+         ▼                          ▼                   ▼
+┌──────────────────┐      ┌───────────────────┐ ┌───────────────────┐
+│ PostgreSQL Store │      │ Physical OS Disk  │ │Convex Cloud Store │
+└──────────────────┘      └───────────────────┘ └───────────────────┘
 ```
 
 ### A. Security Filter Chain (`com.trustvault.security`)
@@ -112,11 +119,19 @@ The system is organized into distinct, decoupled architectural layers:
   - Contain no business logic or file I/O operations.
 
 ### F. Storage Subsystem (`com.trustvault.storage`)
-- **Primary Role:** Provide isolated, tamper-evident private blob persistence.
-- **Responsibilities:**
-  - [`LocalStorageService`](file:///d:/TrustVault/src/main/java/com/trustvault/storage/LocalStorageService.java) isolates files in a configured private directory (`./private-storage/uploads`), completely outside public web roots.
-  - Assigns randomly generated UUID storage keys to stored files (`{storageKey}.bin`), eliminating client-controlled file paths.
-  - Rejects symbolic links (`LinkOption.NOFOLLOW_LINKS`) and validates canonical path containment to prevent path traversal attacks.
+- **Primary Role:** Provide isolated, tamper-evident private blob persistence via the pluggable [`StorageService`](file:///d:/TrustVault/src/main/java/com/trustvault/storage/StorageService.java) interface.
+- **Implementations:**
+  - **[`LocalStorageService`](file:///d:/TrustVault/src/main/java/com/trustvault/storage/LocalStorageService.java) (`trustvault.storage.provider=local`):**
+    - Isolates files in a configured private directory (`./private-storage/uploads`), completely outside public web roots.
+    - Assigns randomly generated UUID storage keys to stored files (`{storageKey}.bin`), eliminating client-controlled file paths.
+    - Rejects symbolic links (`LinkOption.NOFOLLOW_LINKS`) and validates canonical path containment to prevent path traversal attacks.
+    - Employs atomic staging (`.tmp` to `.bin`) to eliminate partial writes.
+  - **[`ConvexStorageService`](file:///d:/TrustVault/src/main/java/com/trustvault/storage/ConvexStorageService.java) (`trustvault.storage.provider=convex`):**
+    - Communicates exclusively over secure HTTPS endpoints with deployed Convex HTTP Actions (`/health`, `/files/{storageKey}`).
+    - Authenticates via Bearer token authorization using `TRUSTVAULT_CONVEX_SHARED_SECRET`.
+    - Implements robust validation against accidental shell assignment expressions while supporting standard Base64 secrets with padding (`=`).
+    - Enforces client-side 10 MiB upload caps and sanitizes diagnostic logs to prevent credential leakage.
+    - Prevents ephemeral Render container data loss by persisting production blobs durably in Convex cloud storage.
 
 ---
 
@@ -238,6 +253,21 @@ TrustVault implements a hardened session-based authentication model configured i
 - Inbound requests pass through `ConcurrentSessionFilter` using a registered `SessionRegistryImpl`.
 - When an account is deactivated (`UserService.deactivateUser`) or credentials change (`UserService.changePassword`), active sessions are revoked.
 - **Transaction-Safe Hook:** Revocation is scheduled post-commit using `TransactionSynchronizationManager.registerSynchronization` with an `afterCommit()` callback. Sessions are expired only after the database update commits, preventing premature session invalidation if a transaction rolls back.
+
+### F. Administrator Account Provisioning Architecture (Local Dev vs. Production)
+TrustVault distinguishes between local development test scaffolding and production account management to maintain defense-in-depth:
+
+1. **Local Development Seeding (`DevUserInitializer`):**
+   - **Gated Execution:** Restricted to the `dev` Spring profile and requiring `trustvault.dev.seed-user.enabled=true` (`TV_DEV_SEED_ENABLED=true`). It is absent from the container in production.
+   - **Role Parameterization:** Resolves `TV_DEV_ROLE` (or `trustvault.dev.seed-user.role`), defaulting to `ROLE_USER`. When set to `ROLE_ADMIN`, assigns the administrator role safely via `UserService.createUser(...)`.
+   - **Role Validation:** Strictly validated against the `Role` enum (`ROLE_USER`, `ROLE_ADMIN`). Unsupported or unapproved roles throw an exception and abort startup before any record is created.
+   - **Idempotency & Conflict Protection:** If a username or email conflict exists, creation is skipped, strictly preserving existing account credentials and roles.
+
+2. **Production Cloud Environment (Render / Neon Cloud PostgreSQL):**
+   - **Zero Public Registration / Self-Elevation Routes:** TrustVault does not expose public user registration or role modification endpoints.
+   - **Direct Authenticated Database Administration:** The initial administrator account (day-zero provisioning) or subsequent account elevations are performed directly against the Neon database by an authorized database administrator over TLS (`sslmode=require`).
+   - **Offline BCrypt Hashing (`PasswordHashGenerator`):** Passwords are encrypted offline with `BCryptPasswordEncoder` (work factor 12) via a dedicated CLI utility (`PasswordHashGenerator`) before SQL insertion, ensuring plaintext passwords are never transmitted, committed, or recorded in shell command histories.
+   - **Admin Zero-Trust Boundary:** Holding `ROLE_ADMIN` allows access to global audit trails (`/audit`), but upholds zero-trust regarding document payloads. Document authorization rules (`DocumentAuthorizationService`) apply equally to administrators.
 
 ---
 

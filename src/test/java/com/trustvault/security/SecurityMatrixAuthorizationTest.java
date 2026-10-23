@@ -32,6 +32,7 @@ import java.nio.charset.StandardCharsets;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.not;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
@@ -509,6 +510,24 @@ class SecurityMatrixAuthorizationTest {
                     .andExpect(status().isOk())
                     .andExpect(content().string(not(containsString("Secret Financial Roadmap"))))
                     .andExpect(content().string(containsString("No documents found")));
+        }
+
+        @Test
+        @DisplayName("Category filtering never leaks unshared documents across different owners")
+        void testCategorySearchIsolation() throws Exception {
+            // unsharedUser creates a private document with a distinctive category
+            documentService.createDocument("Secret Financial Roadmap", "Classified data", "HighlyClassified", unsharedUser.getUsername());
+
+            // Owner searches for category "HighlyClassified" via Web -> must NOT return unsharedUser's document
+            mockMvc.perform(get("/documents").param("category", "HighlyClassified").with(user(owner.getUsername())))
+                    .andExpect(status().isOk())
+                    .andExpect(content().string(not(containsString("Secret Financial Roadmap"))))
+                    .andExpect(content().string(containsString("No documents found")));
+
+            // Owner searches for category "HighlyClassified" via REST -> returns empty JSON array
+            mockMvc.perform(get("/api/documents").param("category", "HighlyClassified").with(user(owner.getUsername())))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$", hasSize(0)));
         }
     }
 

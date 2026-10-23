@@ -150,6 +150,10 @@
                   <span class="meta-value" th:text="${document.ownerUsername}">owner</span>
                 </div>
                 <div class="meta-item">
+                  <span class="meta-label">Category</span>
+                  <span class="meta-value" th:text="${document.category != null and !document.category.isEmpty() ? document.category : 'None'}" id="document-detail-category">None</span>
+                </div>
+                <div class="meta-item">
                   <span class="meta-label">Access Level</span>
                   <span class="meta-value" th:text="${document.permissionLabel}">OWNER</span>
                 </div>
@@ -591,6 +595,19 @@
                    maxlength="255"
                    required>
             <div class="form-hint">Required. Maximum 255 characters.</div>
+          </div>
+
+          <!-- Category Field -->
+          <div class="form-group">
+            <label for="edit-doc-category" class="form-label">Category (Optional)</label>
+            <input type="text"
+                   id="edit-doc-category"
+                   name="category"
+                   th:value="${updateDocumentForm != null ? updateDocumentForm.category : document.category}"
+                   class="form-control"
+                   placeholder="e.g. Finance, Legal, Technical"
+                   maxlength="50">
+            <div class="form-hint">Optional. Maximum 50 characters.</div>
           </div>
 
           <!-- Description Field -->

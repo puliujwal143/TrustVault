@@ -316,4 +316,71 @@ class DocumentRestControllerTest {
 
         assertThat(documentRepository.findById(doc.getId())).isPresent();
     }
+
+    @Test
+    @DisplayName("POST /api/documents: creates document with category and returns category in response DTO")
+    void testCreateDocumentWithCategory() throws Exception {
+        CreateDocumentForm form = new CreateDocumentForm("Financial Audit", "Q4 Audit Notes", "Finance");
+
+        mockMvc.perform(post("/api/documents")
+                        .with(user("alice"))
+                        .with(csrf())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(form)))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.title", is("Financial Audit")))
+                .andExpect(jsonPath("$.category", is("Finance")))
+                .andExpect(jsonPath("$.ownerUsername", is("alice")));
+    }
+
+    @Test
+    @DisplayName("POST /api/documents: category exceeding 50 characters returns 400 Bad Request")
+    void testCreateDocumentWithCategoryExceeding50Chars() throws Exception {
+        CreateDocumentForm form = new CreateDocumentForm("Title", "Desc", "C".repeat(51));
+
+        mockMvc.perform(post("/api/documents")
+                        .with(user("alice"))
+                        .with(csrf())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(form)))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    @DisplayName("PUT /api/documents/{id}: updates document category successfully")
+    void testUpdateDocumentWithCategory() throws Exception {
+        Document doc = documentService.createDocument("Original Title", "Original Desc", "Finance", "alice");
+
+        UpdateDocumentForm updateForm = new UpdateDocumentForm("Updated Title", "Updated Desc", "Legal");
+
+        mockMvc.perform(put("/api/documents/" + doc.getId())
+                        .with(user("alice"))
+                        .with(csrf())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(updateForm)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.title", is("Updated Title")))
+                .andExpect(jsonPath("$.category", is("Legal")));
+    }
+
+    @Test
+    @DisplayName("GET /api/documents?category=...: filters accessible documents by category")
+    void testListDocumentsWithCategoryFilter() throws Exception {
+        documentService.createDocument("Tax Form", "Desc", "Finance", "alice");
+        documentService.createDocument("NDA", "Desc", "Legal", "alice");
+
+        mockMvc.perform(get("/api/documents?category=Finance")
+                        .with(user("alice")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$", hasSize(1)))
+                .andExpect(jsonPath("$[0].title", is("Tax Form")))
+                .andExpect(jsonPath("$[0].category", is("Finance")));
+
+        mockMvc.perform(get("/api/documents?category=legal")
+                        .with(user("alice")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$", hasSize(1)))
+                .andExpect(jsonPath("$[0].title", is("NDA")))
+                .andExpect(jsonPath("$[0].category", is("Legal")));
+    }
 }

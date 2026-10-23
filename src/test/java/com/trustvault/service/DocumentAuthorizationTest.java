@@ -711,4 +711,95 @@ class DocumentAuthorizationTest {
             assertThat(finalDoc.getTitle()).isEqualTo("Initial Title");
         }
     }
+
+    @Test
+    @DisplayName("26. createDocument: persists and trims valid category, normalizes blank to null")
+    void createDocument_withCategory_persistsAndNormalizes() {
+        createTestUser("alice", "alice@example.com", Role.ROLE_USER, true);
+
+        Document docWithCategory = documentService.createDocument("Finances", "Summary", "  Finance  ", "alice");
+        assertThat(docWithCategory.getCategory()).isEqualTo("Finance");
+
+        Document docWithBlankCategory = documentService.createDocument("Notes", "Desc", "   ", "alice");
+        assertThat(docWithBlankCategory.getCategory()).isNull();
+    }
+
+    @Test
+    @DisplayName("27. createDocument: category exceeding 50 characters throws IllegalArgumentException")
+    void createDocument_categoryExceeding50Chars_throwsIllegalArgumentException() {
+        createTestUser("alice", "alice@example.com", Role.ROLE_USER, true);
+
+        assertThatThrownBy(() -> documentService.createDocument("Title", "Desc", "C".repeat(51), "alice"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Document category must not exceed 50 characters");
+    }
+
+    @Test
+    @DisplayName("28. updateDocument: updates category, trims input, and rejects category exceeding 50 characters")
+    void updateDocument_withCategory_updatesAndValidates() {
+        createTestUser("alice", "alice@example.com", Role.ROLE_USER, true);
+
+        Document doc = documentService.createDocument("Contract", "Initial", "Finance", "alice");
+        Long docId = doc.getId();
+
+        // Update category
+        Document updated = documentService.updateDocument(docId, "Contract", "Updated", "  Legal  ", "alice");
+        assertThat(updated.getCategory()).isEqualTo("Legal");
+
+        // Clear category to null via blank
+        Document cleared = documentService.updateDocument(docId, "Contract", "Updated", "   ", "alice");
+        assertThat(cleared.getCategory()).isNull();
+
+        // Rejects > 50 characters
+        assertThatThrownBy(() -> documentService.updateDocument(docId, "Contract", "Desc", "L".repeat(51), "alice"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Document category must not exceed 50 characters");
+    }
+
+    @Test
+    @DisplayName("29. searchAccessibleDocuments: category filtering matches case-insensitively and returns matching accessible docs")
+    void searchAccessibleDocuments_filterByCategory() {
+        createTestUser("alice", "alice@example.com", Role.ROLE_USER, true);
+
+        Document doc1 = documentService.createDocument("Q1 Report", "Desc", "Finance", "alice");
+        Document doc2 = documentService.createDocument("Employment Agreement", "Desc", "Legal", "alice");
+        Document doc3 = documentService.createDocument("Architecture Spec", "Desc", "Engineering", "alice");
+
+        List<Document> financeDocs = documentService.searchAccessibleDocuments("alice", null, null, "fin", null, null);
+        assertThat(financeDocs).extracting(Document::getId).containsExactly(doc1.getId());
+
+        List<Document> legalDocs = documentService.searchAccessibleDocuments("alice", null, null, "LEGAL", null, null);
+        assertThat(legalDocs).extracting(Document::getId).containsExactly(doc2.getId());
+
+        List<Document> allDocs = documentService.searchAccessibleDocuments("alice", null, null, null, null, null);
+        assertThat(allDocs).extracting(Document::getId).contains(doc1.getId(), doc2.getId(), doc3.getId());
+    }
+
+    @Test
+    @DisplayName("30. searchAccessibleDocuments: category filtering strictly isolates unauthorized documents across users")
+    void searchAccessibleDocuments_crossUserIsolation() {
+        createTestUser("alice", "alice@example.com", Role.ROLE_USER, true);
+        createTestUser("bob", "bob@example.com", Role.ROLE_USER, true);
+        createTestUser("mallory", "mallory@example.com", Role.ROLE_USER, true);
+
+        Document aliceSecret = documentService.createDocument("Alice Top Secret", "Classified", "TopSecret", "alice");
+        Document bobSecret = documentService.createDocument("Bob Secret Recipe", "Cooking", "TopSecret", "bob");
+
+        // Bob searches for "TopSecret" -> receives ONLY Bob's document, NEVER Alice's
+        List<Document> bobResults = documentService.searchAccessibleDocuments("bob", null, null, "TopSecret", null, null);
+        assertThat(bobResults).extracting(Document::getId).containsExactly(bobSecret.getId());
+        assertThat(bobResults).extracting(Document::getTitle).doesNotContain("Alice Top Secret");
+
+        // Mallory (who has no documents) searches for "TopSecret" -> receives empty list
+        List<Document> malloryResults = documentService.searchAccessibleDocuments("mallory", null, null, "TopSecret", null, null);
+        assertThat(malloryResults).isEmpty();
+
+        // When Alice shares her document with Bob, Bob can now see both
+        documentShareService.grantAccess(aliceSecret.getId(), "bob", SharePermission.READ, "alice");
+        List<Document> bobSharedResults = documentService.searchAccessibleDocuments("bob", null, null, "TopSecret", null, null);
+        assertThat(bobSharedResults).extracting(Document::getId).contains(aliceSecret.getId(), bobSecret.getId());
+
+        // Mallory still receives empty list
+        assertThat(documentService.searchAccessibleDocuments("mallory", null, null, "TopSecret", null, null)).isEmpty();
+    }
 }

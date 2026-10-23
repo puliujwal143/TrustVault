@@ -1,6 +1,9 @@
 # TrustVault — Secure Enterprise Document-Sharing Application
 
-TrustVault is an enterprise document-sharing platform engineered with defense-in-depth principles. It combines fine-grained Attribute-Based Access Control (ABAC), isolated private document storage, cryptographic file integrity verification, and an auditable activity history.
+TrustVault is an enterprise document-sharing platform engineered with defense-in-depth principles. It combines fine-grained Attribute-Based Access Control (ABAC), isolated private document storage (supporting local filesystem and Convex cloud storage), cryptographic file integrity verification, and an auditable activity history.
+
+- **Live Deployment:** [https://trustvault-axea.onrender.com](https://trustvault-axea.onrender.com)
+- **Repository:** Git/GitHub pushed on branch `main`
 
 For in-depth architectural blueprints and component breakdowns, see [`ARCHITECTURE.md`](file:///d:/TrustVault/ARCHITECTURE.md).
 For detailed threat models, risk ratings, and security verification checklists, see [`THREATS.md`](file:///d:/TrustVault/THREATS.md).
@@ -16,15 +19,32 @@ TrustVault is built using a modern enterprise Java stack:
 - **Security:** Spring Security 6 (Form Login, Synchronizer Token CSRF, Session Fixation Migration, Concurrent Session Tracking)
 - **Web & UI:** Spring Web MVC with Thymeleaf 3 and Spring Security Layout Dialect
 - **Persistence:** Spring Data JPA & Hibernate with PostgreSQL Dialect
-- **Database:** PostgreSQL 15+ (Production / Local Dev), H2 in PostgreSQL compatibility mode (Isolated test suite)
-- **Storage Subsystem:** Local filesystem storage decoupled from web document roots
+- **Database:** PostgreSQL 15+ / Neon Cloud PostgreSQL (Production / Local Dev), H2 in PostgreSQL compatibility mode (Isolated test suite)
+- **Storage Subsystem:** Pluggable `StorageService` provider abstraction:
+  - `LocalStorageService`: Local private filesystem storage isolated outside web document roots
+  - `ConvexStorageService`: Production cloud storage via Convex HTTP Actions with Bearer token authentication
 - **Validation:** Jakarta / Hibernate Bean Validation & custom byte-level file payload inspection
+- **Deployment & Runtime:** Multi-stage Docker containerization on Render with non-root security execution
 - **Build & Dependency Tooling:** Apache Maven with Maven Wrapper (`mvnw` / `mvnw.cmd`)
 - **Testing Suite:** JUnit 5, MockMvc, Spring Security Test, AssertJ
 
 ---
 
 ## 2. Core Features & Access Control Model
+
+### Three Clearly Defined Access Concepts
+TrustVault implements a clean separation between global system administration and document-level attribute-based access control:
+
+1. **Admin (`ROLE_ADMIN`):**
+   - Authorized platform and user administrator.
+   - Manages user lifecycle, reviews comprehensive audit trails, and monitors system health.
+   - **Admin Zero-Trust Policy:** Administrators are NOT automatically granted access to private document contents or file payloads. Access to documents strictly requires an explicit document ownership or share grant.
+2. **Document Owner (`document.getOwner()`):**
+   - The creator and authoritative custodian of a document.
+   - Holds full operational authority: view metadata, download files, edit metadata, upload/replace files, delete documents, and manage collaborators (grant/revoke).
+3. **Viewer / Collaborator (`DocumentShare` Grants):**
+   - **Viewer (`SharePermission.READ`):** Explicitly authorized user permitted to view document metadata and download attached file payloads. Strictly forbidden from modifying metadata, replacing files, deleting, or managing shares.
+   - **Editor (`SharePermission.EDIT`):** Authorized collaborator permitted to view metadata, download files, update metadata, and upload/replace file attachments. Strictly forbidden from deleting the document or managing collaborators.
 
 ### Authentication & Account Security
 - **Hardened Passwords:** Password hashes are computed with Spring Security's `BCryptPasswordEncoder` using work factor 12.
@@ -39,7 +59,7 @@ TrustVault enforces Attribute-Based Access Control (ABAC) at the service layer:
 | :--- | :---: | :---: | :---: | :---: | :---: | :---: |
 | **Document Owner** | Allowed | Allowed | Allowed | Allowed | Allowed | Allowed |
 | **Collaborator (`EDIT`)** | Allowed | Allowed | Allowed | Allowed | **Denied** (403) | **Denied** (403) |
-| **Collaborator (`READ`)** | Allowed | Allowed | **Denied** (403) | **Denied** (403) | **Denied** (403) | **Denied** (403) |
+| **Viewer (`READ`)** | Allowed | Allowed | **Denied** (403) | **Denied** (403) | **Denied** (403) | **Denied** (403) |
 | **Unshared User** | **Denied** (404) | **Denied** (404) | **Denied** (404) | **Denied** (404) | **Denied** (404) | **Denied** (404) |
 | **Admin (`ROLE_ADMIN`)** | **Denied** (404)* | **Denied** (404)* | **Denied** (404)* | **Denied** (404)* | **Denied** (404)* | **Denied** (404)* |
 
@@ -48,12 +68,22 @@ TrustVault enforces Attribute-Based Access Control (ABAC) at the service layer:
 - **Anti-IDOR Information Leakage Reduction:** Unshared documents return `HTTP 404 Not Found` (`ResourceNotFoundException`) rather than `403 Forbidden`, preventing attackers from easily enumerating valid document IDs.
 - **Owner-Only Share Management:** Document owners manage collaborators via the document detail page or REST endpoints (`POST/DELETE/GET /api/documents/{id}/shares/**`). Collaborators cannot modify sharing rules or delete documents.
 
+### Document Categorization & Multi-Parameter Search
+- **Document Categorization:** Documents support an optional `category` metadata field (bounded to 50 characters, trimmed, and normalized). Categories can be set at creation and updated during editing by document owners and EDIT collaborators.
+- **Multi-Parameter Search:** Users can filter their documents simultaneously across:
+  1. **Document Name / Title & Description (`q`):** Full case-insensitive keyword search.
+  2. **Document Owner (`owner`):** Filter by creator username.
+  3. **Document Category (`category`):** Filter by category with datalist auto-completion for accessible categories.
+  4. **Creation Date Range (`fromDate`, `toDate`):** Inclusive date bounding.
+- **Cross-User Search Isolation:** Search filters are strictly scoped to documents the requesting user is authorized to access (owned or explicitly shared). Unauthorized or private documents belonging to other users are never evaluated, enumerated, or leaked in search results.
+
 ### Secure File Upload, Storage & Download
 - **10 MiB File Boundary:** `FileValidationService` strictly caps file uploads to 10 MiB (`10_485_760` bytes).
 - **Deep Payload Validation:** Verifies magic byte signatures for PDF (`%PDF-`), PNG, JPEG, and ZIP. Plaintext/code files are verified for UTF-8 encoding and immediately rejected if binary NUL bytes (`0x00`) are present.
 - **Zip-Slip & Zip-Bomb Defenses:** Inspects zip entries without full decompression, enforcing entry limits (max 1,000 files), decompression thresholds (max 50 MiB), and blocking path traversal sequences (`../`).
 - **Isolated Private Storage:** `LocalStorageService` stores files in `./private-storage/uploads` using non-predictable UUID keys (`{storageKey}.bin`), rejecting symlinks (`NOFOLLOW_LINKS`) and preventing directory traversal.
-- **Download Integrity Verification (Fail-Closed):** Before streaming a download, `DocumentService.downloadFile` computes the streaming SHA-256 digest from disk and compares it to the database checksum using constant-time `MessageDigest.isEqual`. A mismatch immediately aborts the request (`StorageException`, `HTTP 500`), returning zero bytes to protect clients from corrupted or altered files.
+- **Production Cloud Storage:** `ConvexStorageService` provides seamless, durable cloud blob storage via Convex HTTP Actions over TLS with safe Bearer token authorization, avoiding ephemeral Render container filesystem data loss.
+- **Download Integrity Verification (Fail-Closed):** Before streaming a download, `DocumentService.downloadFile` computes the streaming SHA-256 digest and compares it to the database checksum using constant-time `MessageDigest.isEqual`. A mismatch immediately aborts the request (`StorageException`, `HTTP 500`), returning zero bytes to protect clients from corrupted or altered files.
 - **Header Injection Defense:** Filenames in the `Content-Disposition` header are sanitized to remove carriage returns, newlines, semicolons, and quotes.
 
 ### Auditable Activity History
@@ -115,22 +145,75 @@ DB_USERNAME=postgres
 DB_PASSWORD=your_secure_password_here
 
 PORT=8080
+
+# Storage Provider Configuration: 'local' (default) or 'convex' (cloud)
+TRUSTVAULT_STORAGE_PROVIDER=local
 STORAGE_UPLOAD_DIR=./private-storage/uploads
+
+# Convex Cloud Storage (Required when TRUSTVAULT_STORAGE_PROVIDER=convex)
+TRUSTVAULT_CONVEX_BASE_URL=https://your-deployment.convex.site
+TRUSTVAULT_CONVEX_SHARED_SECRET=your_convex_shared_secret
 ```
 
-### Step 3: Development User Provisioning (Optional)
-To seed an initial test user on startup without hardcoding credentials in code:
-1. Ensure the `dev` profile is active.
+### Step 3: Development Account Provisioning (Local Only)
+To seed an initial test user or administrator on startup in development without hardcoding credentials in code:
+1. Ensure the `dev` profile is active (`-Dspring.profiles.active=dev` or `$env:SPRING_PROFILES_ACTIVE="dev"`).
 2. Set the following environment variables in your shell or `.env`:
    ```powershell
    $env:TV_DEV_SEED_ENABLED="true"
-   $env:TV_DEV_USERNAME="devuser"
+   $env:TV_DEV_USERNAME="devadmin"
    $env:TV_DEV_PASSWORD="YourStrongDevPassword123!"
-   $env:TV_DEV_EMAIL="devuser@example.com"
+   $env:TV_DEV_EMAIL="devadmin@example.com"
+   # Optional: defaults to ROLE_USER; set to ROLE_ADMIN to create an administrator
+   $env:TV_DEV_ROLE="ROLE_ADMIN"
    ```
-   *Note: `DevUserInitializer` only executes when both the `dev` profile is enabled and `TV_DEV_SEED_ENABLED=true`.*
+   *Security Note: `DevUserInitializer` is strictly gated by `@Profile("dev")` and `TV_DEV_SEED_ENABLED=true`. It is disabled by default and never runs in production. Existing user and email collisions are preserved without modifying existing passwords or roles.*
 
-### Step 4: Port Configuration & Overrides
+### Step 4: Production Administrator Provisioning (Render / Neon Cloud)
+In production, automatic seeders are permanently disabled to prevent unauthorized account creation. Because TrustVault does not expose a public registration endpoint, administrator accounts must be provisioned or promoted via an authenticated database administration procedure:
+
+#### A. Generating a BCrypt-12 Password Hash Offline
+To avoid exposing plaintext passwords over the network or in shell history, use the built-in `PasswordHashGenerator` utility:
+```powershell
+# Interactive mode (prompts securely without echoing password to terminal):
+& .\mvnw.cmd -q exec:java "-Dexec.mainClass=com.trustvault.security.PasswordHashGenerator"
+```
+The utility enforces minimum password complexity (>= 8 characters), uses BCrypt work factor 12 (4,096 iterations), and outputs the formatted hash:
+```
+BCrypt (strength 12) Hash:
+$2a$12$KFmHRWSNokQaDEiB6Sa5qOs9mOsnrXBVpS.tKdkpf3pzhgvZEBm2G
+```
+
+#### B. First Administrator Creation in Neon
+Connect to your Neon PostgreSQL instance via the **Neon Web Console SQL Editor** (authenticated over TLS with MFA) or `psql` with `sslmode=require`:
+```sql
+INSERT INTO app_users (username, password, email, role, enabled, created_at)
+VALUES (
+    'admin',
+    '$2a$12$KFmHRWSNokQaDEiB6Sa5qOs9mOsnrXBVpS.tKdkpf3pzhgvZEBm2G',
+    'admin@trustvault.io',
+    'ROLE_ADMIN',
+    true,
+    CURRENT_TIMESTAMP
+);
+```
+
+#### C. Promoting an Existing Account in Neon
+If the user account already exists in Neon:
+```sql
+UPDATE app_users
+SET role = 'ROLE_ADMIN'
+WHERE username = '<target_username>';
+```
+
+*Verification:*
+```sql
+SELECT id, username, email, role, enabled FROM app_users WHERE username = '<target_username>';
+```
+
+*Admin Zero-Trust Policy:* Accounts with `ROLE_ADMIN` can access system-wide audit records (`/audit`), but are strictly barred by `DocumentAuthorizationService` from viewing, editing, or downloading private documents without explicit ownership or a collaborator share.
+
+### Step 5: Port Configuration & Overrides
 - **Default Port:** The application starts on port `8080` (configured as `server.port: ${PORT:8080}`).
 - **Resolving Port Conflicts:** If port 8080 is occupied by another local service, override the port without altering configuration files:
   - Via environment variable:
@@ -167,7 +250,7 @@ To run the entire test suite on Windows:
 ```
 
 ### Test Suite Execution Summary
-- **Verified Full Test Suite Result:** **368 tests run, 368 passed, 0 failures, 0 errors, 6 skipped.**
+- **Verified Full Test Suite Result:** **416 tests run, 410 passed, 0 failures, 0 errors, 6 skipped.**
 - **Skipped Tests:** 6 tests in `LocalStorageServiceTest` verify symbolic link rejection on Unix file systems. On Windows environments without Developer Mode / administrative symlink privileges, these tests are cleanly skipped via JUnit assumptions.
 
 To run a specific test suite:
@@ -190,6 +273,9 @@ To run a specific test suite:
 
 # File Validation & Zip Security Tests
 .\mvnw.cmd test -Dtest=FileValidationServiceTest
+
+# Convex Cloud Storage Provider & Validation Tests
+.\mvnw.cmd test -Dtest=ConvexStorageServiceTest
 ```
 
 ---

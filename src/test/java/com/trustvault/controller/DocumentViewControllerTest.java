@@ -1055,4 +1055,67 @@ class DocumentViewControllerTest {
 
         assertThat(documentRepository.findById(doc.getId())).isPresent();
     }
+
+    @Test
+    @DisplayName("POST /documents: creates document with category via web form submission")
+    void testCreateDocumentWithCategoryViaWeb() throws Exception {
+        mockMvc.perform(post("/documents")
+                        .with(user("alice"))
+                        .with(csrf())
+                        .param("title", "Operations Plan")
+                        .param("description", "Annual plan")
+                        .param("category", "Operations"))
+                .andExpect(status().is3xxRedirection())
+                .andExpect(redirectedUrl("/documents"));
+
+        List<Document> docs = documentRepository.findAll();
+        assertThat(docs).anyMatch(d -> "Operations Plan".equals(d.getTitle()) && "Operations".equals(d.getCategory()));
+    }
+
+    @Test
+    @DisplayName("POST /documents: category exceeding 50 characters fails validation and re-renders form")
+    void testCreateDocumentWithCategoryExceeding50CharsViaWeb() throws Exception {
+        mockMvc.perform(post("/documents")
+                        .with(user("alice"))
+                        .with(csrf())
+                        .param("title", "Too Long Category Doc")
+                        .param("description", "Desc")
+                        .param("category", "C".repeat(51)))
+                .andExpect(status().isOk())
+                .andExpect(view().name("documents/list"))
+                .andExpect(model().attributeHasFieldErrors("createDocumentForm", "category"));
+    }
+
+    @Test
+    @DisplayName("POST /documents/{id}/edit: updates document category via web form")
+    void testUpdateDocumentWithCategoryViaWeb() throws Exception {
+        Document doc = documentService.createDocument("Original Doc", "Desc", "Finance", "alice");
+
+        mockMvc.perform(post("/documents/" + doc.getId() + "/edit")
+                        .with(user("alice"))
+                        .with(csrf())
+                        .param("title", "Original Doc")
+                        .param("description", "Updated Desc")
+                        .param("category", "Compliance"))
+                .andExpect(status().is3xxRedirection())
+                .andExpect(redirectedUrl("/documents/" + doc.getId()));
+
+        Document updated = documentRepository.findById(doc.getId()).orElseThrow();
+        assertThat(updated.getCategory()).isEqualTo("Compliance");
+    }
+
+    @Test
+    @DisplayName("GET /documents?category=...: filters accessible documents by category in dashboard view")
+    void testListDocumentsWithCategoryFilterViaWeb() throws Exception {
+        Document doc1 = documentService.createDocument("Finance Doc", "Desc", "Finance", "alice");
+        Document doc2 = documentService.createDocument("HR Doc", "Desc", "HR", "alice");
+
+        mockMvc.perform(get("/documents?category=Finance")
+                        .with(user("alice")))
+                .andExpect(status().isOk())
+                .andExpect(view().name("documents/list"))
+                .andExpect(model().attribute("categoryFilter", "Finance"))
+                .andExpect(model().attribute("documents", org.hamcrest.Matchers.hasSize(1)))
+                .andExpect(model().attribute("availableCategories", org.hamcrest.Matchers.contains("Finance", "HR")));
+    }
 }

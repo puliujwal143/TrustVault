@@ -28,6 +28,8 @@ import org.springframework.web.multipart.MultipartFile;
 import java.io.IOException;
 import java.io.InputStream;
 import java.time.Instant;
+import java.time.LocalDate;
+import java.time.ZoneId;
 import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
@@ -104,6 +106,21 @@ public class DocumentService {
      * @throws IllegalStateException    if owner user account is disabled
      */
     public Document createDocument(String title, String description, String ownerUsername) {
+        return createDocument(title, description, null, ownerUsername);
+    }
+
+    /**
+     * Creates and persists a new document with an optional category, assigning the authenticated user as the exclusive owner.
+     *
+     * @param title          document title (1-255 characters, required)
+     * @param description    optional description (max 1000 characters)
+     * @param category       optional category (max 50 characters)
+     * @param ownerUsername  the authenticated username of the creator
+     * @return the persisted Document entity
+     * @throws IllegalArgumentException if title, category, or owner parameters are invalid
+     * @throws IllegalStateException    if owner user account is disabled
+     */
+    public Document createDocument(String title, String description, String category, String ownerUsername) {
         Objects.requireNonNull(ownerUsername, "Owner username must not be null");
 
         String normalizedOwner = ownerUsername.trim();
@@ -116,8 +133,9 @@ public class DocumentService {
 
         String validatedTitle = validateAndSanitizeTitle(title);
         String validatedDescription = validateAndSanitizeDescription(description);
+        String validatedCategory = validateAndSanitizeCategory(category);
 
-        Document document = new Document(validatedTitle, validatedDescription, owner);
+        Document document = new Document(validatedTitle, validatedDescription, validatedCategory, owner);
         Document savedDocument = documentRepository.save(document);
 
         if (auditService != null) {
@@ -171,6 +189,21 @@ public class DocumentService {
      * @return the updated Document entity
      */
     public Document updateDocument(Long documentId, String newTitle, String newDescription, String requestingUsername) {
+        return updateDocument(documentId, newTitle, newDescription, null, requestingUsername);
+    }
+
+    /**
+     * Updates document metadata including category, verifying that the caller has EDIT access (as owner or EDIT grantee).
+     * Coordinates with share management by acquiring a pessimistic write lock on the document.
+     *
+     * @param documentId         the document ID
+     * @param newTitle           the updated title (1-255 characters)
+     * @param newDescription     the updated description (max 1000 characters)
+     * @param newCategory        the updated category (max 50 characters)
+     * @param requestingUsername the authenticated username
+     * @return the updated Document entity
+     */
+    public Document updateDocument(Long documentId, String newTitle, String newDescription, String newCategory, String requestingUsername) {
         Objects.requireNonNull(documentId, "Document ID must not be null");
         Objects.requireNonNull(requestingUsername, "Requesting username must not be null");
 
@@ -179,9 +212,11 @@ public class DocumentService {
 
         String validatedTitle = validateAndSanitizeTitle(newTitle);
         String validatedDescription = validateAndSanitizeDescription(newDescription);
+        String validatedCategory = validateAndSanitizeCategory(newCategory);
 
         document.setTitle(validatedTitle);
         document.setDescription(validatedDescription);
+        document.setCategory(validatedCategory);
 
         Document updatedDocument = documentRepository.save(document);
 
@@ -280,6 +315,84 @@ public class DocumentService {
         }
 
         return documentRepository.findAllAccessibleByUsername(normalizedUsername);
+    }
+
+    /**
+     * Searches and filters documents accessible to the requesting user by keyword (title/description),
+     * owner username, category, and creation date bounds.
+     *
+     * <p>Security & Authorization Enforcement:
+     * Cross-user isolation is guaranteed by computing the search strictly over the accessible documents
+     * retrieved via {@link #listAccessibleDocuments(String)}. Unauthorized or unshared documents are
+     * never evaluated or leaked.
+     *
+     * @param requestingUsername the authenticated username
+     * @param query              optional search keyword for title or description
+     * @param owner              optional filter for document owner username
+     * @param category           optional filter for document category
+     * @param fromDate           optional start date bound (inclusive)
+     * @param toDate             optional end date bound (inclusive)
+     * @return filtered list of accessible documents
+     */
+    @Transactional(readOnly = true)
+    public List<Document> searchAccessibleDocuments(
+            String requestingUsername,
+            String query,
+            String owner,
+            String category,
+            LocalDate fromDate,
+            LocalDate toDate) {
+
+        List<Document> accessible = listAccessibleDocuments(requestingUsername);
+        if (accessible.isEmpty()) {
+            return Collections.emptyList();
+        }
+
+        return accessible.stream()
+                .filter(d -> {
+                    if (query == null || query.trim().isBlank()) {
+                        return true;
+                    }
+                    String q = query.trim().toLowerCase(Locale.ROOT);
+                    return (d.getTitle() != null && d.getTitle().toLowerCase(Locale.ROOT).contains(q))
+                            || (d.getDescription() != null && d.getDescription().toLowerCase(Locale.ROOT).contains(q));
+                })
+                .filter(d -> {
+                    if (owner == null || owner.trim().isBlank()) {
+                        return true;
+                    }
+                    String o = owner.trim().toLowerCase(Locale.ROOT);
+                    return d.getOwner() != null && d.getOwner().getUsername() != null
+                            && d.getOwner().getUsername().toLowerCase(Locale.ROOT).contains(o);
+                })
+                .filter(d -> {
+                    if (category == null || category.trim().isBlank()) {
+                        return true;
+                    }
+                    String c = category.trim().toLowerCase(Locale.ROOT);
+                    return d.getCategory() != null && d.getCategory().toLowerCase(Locale.ROOT).contains(c);
+                })
+                .filter(d -> {
+                    if (fromDate == null) {
+                        return true;
+                    }
+                    if (d.getCreatedAt() == null) {
+                        return false;
+                    }
+                    LocalDate docDate = d.getCreatedAt().atZone(ZoneId.systemDefault()).toLocalDate();
+                    return !docDate.isBefore(fromDate);
+                })
+                .filter(d -> {
+                    if (toDate == null) {
+                        return true;
+                    }
+                    if (d.getCreatedAt() == null) {
+                        return false;
+                    }
+                    LocalDate docDate = d.getCreatedAt().atZone(ZoneId.systemDefault()).toLocalDate();
+                    return !docDate.isAfter(toDate);
+                })
+                .toList();
     }
 
     /**
@@ -580,6 +693,17 @@ public class DocumentService {
         String trimmed = description.trim();
         if (trimmed.length() > 1000) {
             throw new IllegalArgumentException("Document description must not exceed 1000 characters");
+        }
+        return trimmed.isEmpty() ? null : trimmed;
+    }
+
+    private String validateAndSanitizeCategory(String category) {
+        if (category == null) {
+            return null;
+        }
+        String trimmed = category.trim();
+        if (trimmed.length() > 50) {
+            throw new IllegalArgumentException("Document category must not exceed 50 characters");
         }
         return trimmed.isEmpty() ? null : trimmed;
     }

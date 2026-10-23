@@ -75,20 +75,28 @@ public class DocumentController {
             @Valid @RequestBody CreateDocumentForm form,
             Authentication authentication) {
         String username = authentication != null ? authentication.getName() : null;
-        Document document = documentService.createDocument(form.getTitle(), form.getDescription(), username);
+        Document document = documentService.createDocument(form.getTitle(), form.getDescription(), form.getCategory(), username);
         return ResponseEntity.status(HttpStatus.CREATED).body(DocumentResponseDto.from(document));
     }
 
     /**
-     * Lists all documents accessible to the authenticated caller (owned and shared).
+     * Lists all documents accessible to the authenticated caller (owned and shared),
+     * optionally filtered by query, owner username, or category.
      *
+     * @param query          optional search query for title or description
+     * @param owner          optional owner username filter
+     * @param category       optional category filter
      * @param authentication authenticated user principal
      * @return list of accessible DocumentResponseDto items
      */
     @GetMapping
-    public ResponseEntity<List<DocumentResponseDto>> listDocuments(Authentication authentication) {
+    public ResponseEntity<List<DocumentResponseDto>> listDocuments(
+            @RequestParam(value = "q", required = false) String query,
+            @RequestParam(value = "owner", required = false) String owner,
+            @RequestParam(value = "category", required = false) String category,
+            Authentication authentication) {
         String username = authentication != null ? authentication.getName() : null;
-        List<Document> documents = documentService.listAccessibleDocuments(username);
+        List<Document> documents = documentService.searchAccessibleDocuments(username, query, owner, category, null, null);
         return ResponseEntity.ok(documents.stream().map(DocumentResponseDto::from).toList());
     }
 
@@ -208,7 +216,7 @@ public class DocumentController {
             Authentication authentication) {
 
         String username = authentication != null ? authentication.getName() : null;
-        Document updated = documentService.updateDocument(id, form.getTitle(), form.getDescription(), username);
+        Document updated = documentService.updateDocument(id, form.getTitle(), form.getDescription(), form.getCategory(), username);
         return ResponseEntity.ok(DocumentResponseDto.from(updated));
     }
 

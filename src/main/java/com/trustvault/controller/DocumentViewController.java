@@ -100,6 +100,7 @@ public class DocumentViewController {
             @RequestParam(value = "filter", required = false) String filter,
             @RequestParam(value = "q", required = false) String query,
             @RequestParam(value = "owner", required = false) String owner,
+            @RequestParam(value = "category", required = false) String category,
             @RequestParam(value = "fromDate", required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fromDate,
             @RequestParam(value = "toDate", required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate toDate,
             Model model,
@@ -110,7 +111,7 @@ public class DocumentViewController {
             return "redirect:/login";
         }
 
-        populateDashboardModel(model, username, filter, query, owner, fromDate, toDate);
+        populateDashboardModel(model, username, filter, query, owner, category, fromDate, toDate);
 
         if (!model.containsAttribute("createDocumentForm")) {
             model.addAttribute("createDocumentForm", new CreateDocumentForm());
@@ -183,7 +184,7 @@ public class DocumentViewController {
         }
 
         if (!model.containsAttribute("updateDocumentForm")) {
-            model.addAttribute("updateDocumentForm", new UpdateDocumentForm(document.getTitle(), document.getDescription()));
+            model.addAttribute("updateDocumentForm", new UpdateDocumentForm(document.getTitle(), document.getDescription(), document.getCategory()));
         }
 
         if (uploadSuccess != null && !uploadSuccess.isBlank()) {
@@ -353,19 +354,19 @@ public class DocumentViewController {
         }
 
         if (bindingResult.hasErrors()) {
-            populateDashboardModel(model, username, filter, null, null, null, null);
+            populateDashboardModel(model, username, filter, null, null, null, null, null);
             model.addAttribute("modalOpen", true);
             return "documents/list";
         }
 
         try {
-            Document created = documentService.createDocument(form.getTitle(), form.getDescription(), username);
+            Document created = documentService.createDocument(form.getTitle(), form.getDescription(), form.getCategory(), username);
             redirectAttributes.addFlashAttribute("successMessage",
                     "Document '" + created.getTitle() + "' was successfully created.");
             return "redirect:/documents";
         } catch (IllegalArgumentException | IllegalStateException ex) {
             bindingResult.reject("creationFailed", ex.getMessage());
-            populateDashboardModel(model, username, filter, null, null, null, null);
+            populateDashboardModel(model, username, filter, null, null, null, null, null);
             model.addAttribute("modalOpen", true);
             return "documents/list";
         }
@@ -401,7 +402,7 @@ public class DocumentViewController {
         }
 
         try {
-            documentService.updateDocument(id, form.getTitle(), form.getDescription(), currentUsername);
+            documentService.updateDocument(id, form.getTitle(), form.getDescription(), form.getCategory(), currentUsername);
             redirectAttributes.addFlashAttribute("successMessage", "Document details were successfully updated.");
         } catch (IllegalArgumentException ex) {
             redirectAttributes.addFlashAttribute("errorMessage", ex.getMessage());
@@ -450,6 +451,7 @@ public class DocumentViewController {
             String filter,
             String query,
             String ownerFilter,
+            String categoryFilter,
             LocalDate fromDate,
             LocalDate toDate) {
 
@@ -478,6 +480,14 @@ public class DocumentViewController {
         long ownedCount = allViewModels.stream().filter(DocumentItemViewModel::isOwner).count();
         long sharedCount = totalCount - ownedCount;
 
+        // Extract available categories across accessible documents for auto-complete/datalist
+        List<String> availableCategories = allViewModels.stream()
+                .map(DocumentItemViewModel::category)
+                .filter(c -> c != null && !c.isBlank())
+                .distinct()
+                .sorted()
+                .toList();
+
         // 5. Apply active tab filtering ('all', 'owned', 'shared')
         String activeFilter = (filter != null) ? filter.trim().toLowerCase(Locale.ROOT) : "all";
         List<DocumentItemViewModel> displayedDocuments = allViewModels;
@@ -489,7 +499,7 @@ public class DocumentViewController {
             activeFilter = "all";
         }
 
-        // 6. Apply search and filtering (Keyword/Title, Owner, Date)
+        // 6. Apply search and filtering (Keyword/Title, Owner, Category, Date)
         if (query != null && !query.trim().isBlank()) {
             String q = query.trim().toLowerCase(Locale.ROOT);
             displayedDocuments = displayedDocuments.stream()
@@ -502,6 +512,13 @@ public class DocumentViewController {
             String o = ownerFilter.trim().toLowerCase(Locale.ROOT);
             displayedDocuments = displayedDocuments.stream()
                     .filter(d -> d.ownerUsername() != null && d.ownerUsername().toLowerCase(Locale.ROOT).contains(o))
+                    .toList();
+        }
+
+        if (categoryFilter != null && !categoryFilter.trim().isBlank()) {
+            String c = categoryFilter.trim().toLowerCase(Locale.ROOT);
+            displayedDocuments = displayedDocuments.stream()
+                    .filter(d -> d.category() != null && d.category().toLowerCase(Locale.ROOT).contains(c))
                     .toList();
         }
 
@@ -533,6 +550,8 @@ public class DocumentViewController {
         model.addAttribute("activeTab", activeFilter);
         model.addAttribute("searchQuery", query != null ? query.trim() : "");
         model.addAttribute("ownerFilter", ownerFilter != null ? ownerFilter.trim() : "");
+        model.addAttribute("categoryFilter", categoryFilter != null ? categoryFilter.trim() : "");
+        model.addAttribute("availableCategories", availableCategories);
         model.addAttribute("fromDate", fromDate);
         model.addAttribute("toDate", toDate);
         model.addAttribute("pageTitle", "Documents — TrustVault");

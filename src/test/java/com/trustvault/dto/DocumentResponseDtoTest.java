@@ -57,10 +57,24 @@ class DocumentResponseDtoTest {
 
             // File metadata fields must be null and hasFile must be false
             assertThat(dto.hasFile()).isFalse();
+            assertThat(dto.category()).isNull();
             assertThat(dto.fileOriginalName()).isNull();
             assertThat(dto.fileContentType()).isNull();
             assertThat(dto.fileSize()).isNull();
             assertThat(dto.fileUploadedAt()).isNull();
+        }
+
+        @Test
+        @DisplayName("from: document with category maps category accurately")
+        void testDocumentWithCategory() {
+            User owner = new User("alice", "encoded_password", "alice@example.com", Role.ROLE_USER);
+            Document document = new Document("Budget", "Annual budget", "Finance", owner);
+            document.setId(105L);
+
+            DocumentResponseDto dto = DocumentResponseDto.from(document);
+
+            assertThat(dto).isNotNull();
+            assertThat(dto.category()).isEqualTo("Finance");
         }
 
         @Test

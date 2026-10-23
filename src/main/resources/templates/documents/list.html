@@ -118,6 +118,22 @@
                    placeholder="Owner username" />
           </div>
 
+          <!-- Category Filter -->
+          <div style="flex: 1; min-width: 140px;">
+            <label for="search-category-input" style="display: block; font-size: var(--text-xs); font-weight: 500; color: var(--text-secondary); margin-bottom: 4px;">Category</label>
+            <input type="text"
+                   id="search-category-input"
+                   name="category"
+                   th:value="${categoryFilter}"
+                   class="form-control"
+                   list="categories-datalist"
+                   style="font-size: var(--text-xs); padding: var(--space-2) var(--space-3);"
+                   placeholder="e.g. Finance, Legal" />
+            <datalist id="categories-datalist">
+              <option th:each="cat : ${availableCategories}" th:value="${cat}" th:text="${cat}"></option>
+            </datalist>
+          </div>
+
           <!-- From Date Filter -->
           <div style="min-width: 130px;">
             <label for="search-from-date" style="display: block; font-size: var(--text-xs); font-weight: 500; color: var(--text-secondary); margin-bottom: 4px;">From Date</label>
@@ -149,7 +165,7 @@
               </svg>
               <span>Filter</span>
             </button>
-            <a th:if="${(searchQuery != null and !searchQuery.isEmpty()) or (ownerFilter != null and !ownerFilter.isEmpty()) or fromDate != null or toDate != null}"
+            <a th:if="${(searchQuery != null and !searchQuery.isEmpty()) or (ownerFilter != null and !ownerFilter.isEmpty()) or (categoryFilter != null and !categoryFilter.isEmpty()) or fromDate != null or toDate != null}"
                th:href="@{/documents(filter=${activeFilter})}"
                class="btn btn-ghost"
                id="search-reset-btn"
@@ -191,6 +207,7 @@
             <thead>
               <tr>
                 <th scope="col" style="min-width: 240px;">Document</th>
+                <th scope="col">Category</th>
                 <th scope="col">Role / Permission</th>
                 <th scope="col">Attached File</th>
                 <th scope="col">Owner</th>
@@ -205,6 +222,12 @@
                     <a th:href="@{/documents/{id}(id=${doc.id})}" class="doc-title-link" th:text="${doc.title}">Document Title</a>
                     <span th:if="${doc.description != null}" class="doc-desc" th:text="${doc.description}">Document description</span>
                   </div>
+                </td>
+
+                <!-- Category -->
+                <td>
+                  <span th:if="${doc.category != null and !doc.category.isEmpty()}" class="badge" style="background-color: var(--bg-tertiary); color: var(--text-primary); border: 1px solid var(--border-color); font-size: var(--text-xs);" th:text="${doc.category}">Finance</span>
+                  <span th:if="${doc.category == null or doc.category.isEmpty()}" style="color: var(--text-muted); font-size: var(--text-xs);">&mdash;</span>
                 </td>
 
                 <!-- Ownership / Permission Badge -->
@@ -299,6 +322,22 @@
               Title error
             </div>
             <div class="form-hint">Required. Maximum 255 characters.</div>
+          </div>
+
+          <!-- Category Field -->
+          <div class="form-group">
+            <label for="create-doc-category" class="form-label">Category (Optional)</label>
+            <input type="text"
+                   id="create-doc-category"
+                   th:field="*{category}"
+                   class="form-control"
+                   list="categories-datalist"
+                   placeholder="e.g. Finance, Legal, Technical"
+                   maxlength="50">
+            <div th:if="${#fields.hasErrors('category')}" class="form-hint" style="color: var(--color-danger);" th:errors="*{category}">
+              Category error
+            </div>
+            <div class="form-hint">Optional. Maximum 50 characters.</div>
           </div>
 
           <!-- Description Field -->

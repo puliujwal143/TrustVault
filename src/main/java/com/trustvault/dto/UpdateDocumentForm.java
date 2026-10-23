@@ -9,6 +9,7 @@ import jakarta.validation.constraints.Size;
  * Validation bounds:
  * - title: required, 1 to 255 characters (trimmed)
  * - description: optional, up to 1000 characters (trimmed)
+ * - category: optional, up to 50 characters (trimmed)
  */
 public class UpdateDocumentForm {
 
@@ -19,12 +20,20 @@ public class UpdateDocumentForm {
     @Size(max = 1000, message = "Document description must not exceed 1000 characters")
     private String description;
 
+    @Size(max = 50, message = "Document category must not exceed 50 characters")
+    private String category;
+
     public UpdateDocumentForm() {
     }
 
     public UpdateDocumentForm(String title, String description) {
+        this(title, description, null);
+    }
+
+    public UpdateDocumentForm(String title, String description, String category) {
         this.title = title;
         this.description = description;
+        this.category = category;
     }
 
     public String getTitle() {
@@ -41,5 +50,13 @@ public class UpdateDocumentForm {
 
     public void setDescription(String description) {
         this.description = description != null ? description.trim() : null;
+    }
+
+    public String getCategory() {
+        return category;
+    }
+
+    public void setCategory(String category) {
+        this.category = (category != null && !category.isBlank()) ? category.trim() : null;
     }
 }

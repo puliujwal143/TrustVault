@@ -27,6 +27,7 @@ public record DocumentResponseDto(
         UUID storageKey,
         String title,
         String description,
+        String category,
         String ownerUsername,
         Instant createdAt,
         Instant updatedAt,
@@ -37,7 +38,7 @@ public record DocumentResponseDto(
         Instant fileUploadedAt
 ) {
     /**
-     * Backward-compatible constructor for documents without attached files.
+     * Backward-compatible 7-argument constructor for documents without attached files or category.
      */
     public DocumentResponseDto(
             Long id,
@@ -48,7 +49,27 @@ public record DocumentResponseDto(
             Instant createdAt,
             Instant updatedAt
     ) {
-        this(id, storageKey, title, description, ownerUsername, createdAt, updatedAt, false, null, null, null, null);
+        this(id, storageKey, title, description, null, ownerUsername, createdAt, updatedAt, false, null, null, null, null);
+    }
+
+    /**
+     * Backward-compatible 12-argument constructor for documents without category.
+     */
+    public DocumentResponseDto(
+            Long id,
+            UUID storageKey,
+            String title,
+            String description,
+            String ownerUsername,
+            Instant createdAt,
+            Instant updatedAt,
+            boolean hasFile,
+            String fileOriginalName,
+            String fileContentType,
+            Long fileSize,
+            Instant fileUploadedAt
+    ) {
+        this(id, storageKey, title, description, null, ownerUsername, createdAt, updatedAt, hasFile, fileOriginalName, fileContentType, fileSize, fileUploadedAt);
     }
 
     /**
@@ -72,6 +93,7 @@ public record DocumentResponseDto(
                 document.getStorageKey(),
                 document.getTitle(),
                 document.getDescription(),
+                document.getCategory(),
                 document.getOwner() != null ? document.getOwner().getUsername() : null,
                 document.getCreatedAt(),
                 document.getUpdatedAt(),

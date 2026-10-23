@@ -22,6 +22,7 @@ public record DocumentItemViewModel(
         UUID storageKey,
         String title,
         String description,
+        String category,
         String ownerUsername,
         boolean isOwner,
         String permissionLabel,
@@ -33,6 +34,28 @@ public record DocumentItemViewModel(
         Instant createdAt,
         Instant updatedAt
 ) {
+    /**
+     * Backward-compatible 14-argument constructor for views initialized without category.
+     */
+    public DocumentItemViewModel(
+            Long id,
+            UUID storageKey,
+            String title,
+            String description,
+            String ownerUsername,
+            boolean isOwner,
+            String permissionLabel,
+            boolean hasFile,
+            String fileOriginalName,
+            String fileContentType,
+            Long fileSize,
+            String formattedFileSize,
+            Instant createdAt,
+            Instant updatedAt
+    ) {
+        this(id, storageKey, title, description, null, ownerUsername, isOwner, permissionLabel, hasFile, fileOriginalName, fileContentType, fileSize, formattedFileSize, createdAt, updatedAt);
+    }
+
     /**
      * Constructs a safe DocumentItemViewModel from a Document entity and authenticated user context.
      *
@@ -58,6 +81,7 @@ public record DocumentItemViewModel(
                 doc.getStorageKey(),
                 doc.getTitle(),
                 doc.getDescription(),
+                doc.getCategory(),
                 ownerName,
                 owner,
                 resolvedPermission,

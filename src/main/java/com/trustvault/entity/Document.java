@@ -61,6 +61,10 @@ public class Document {
     @Column(name = "description", length = 1000)
     private String description;
 
+    @Size(max = 50, message = "Document category must not exceed 50 characters")
+    @Column(name = "category", length = 50)
+    private String category;
+
     @NotNull
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
     @JoinColumn(name = "owner_id", nullable = false)
@@ -129,16 +133,26 @@ public class Document {
     }
 
     public Document(String title, String description, User owner) {
+        this(title, description, null, owner);
+    }
+
+    public Document(String title, String description, String category, User owner) {
         this();
         this.title = title != null ? title.trim() : null;
         this.description = description != null ? description.trim() : null;
+        this.category = (category != null && !category.isBlank()) ? category.trim() : null;
         this.owner = owner;
     }
 
     public Document(UUID storageKey, String title, String description, User owner) {
+        this(storageKey, title, description, null, owner);
+    }
+
+    public Document(UUID storageKey, String title, String description, String category, User owner) {
         this.storageKey = storageKey != null ? storageKey : UUID.randomUUID();
         this.title = title != null ? title.trim() : null;
         this.description = description != null ? description.trim() : null;
+        this.category = (category != null && !category.isBlank()) ? category.trim() : null;
         this.owner = owner;
     }
 
@@ -193,6 +207,14 @@ public class Document {
 
     public void setDescription(String description) {
         this.description = description != null ? description.trim() : null;
+    }
+
+    public String getCategory() {
+        return category;
+    }
+
+    public void setCategory(String category) {
+        this.category = (category != null && !category.isBlank()) ? category.trim() : null;
     }
 
     public User getOwner() {
@@ -416,6 +438,7 @@ public class Document {
                 ", storageKey=" + storageKey +
                 ", fileStorageKey=" + fileStorageKey +
                 ", title='" + title + '\'' +
+                ", category='" + category + '\'' +
                 ", hasFile=" + hasFile() +
                 ", fileSize=" + fileSize +
                 ", createdAt=" + createdAt +

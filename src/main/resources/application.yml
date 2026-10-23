@@ -54,6 +54,16 @@ spring:
     check-template-location: true
 
 # ------------------------------------------------------------------------------
+# Logging Configuration
+# ------------------------------------------------------------------------------
+logging:
+  file:
+    name: logs/trustvault.log
+  level:
+    root: INFO
+    com.trustvault: DEBUG
+
+# ------------------------------------------------------------------------------
 # Server Configuration
 # ------------------------------------------------------------------------------
 server:
@@ -71,6 +81,11 @@ trustvault:
   storage:
     # Uploaded documents must NEVER be located in public static asset directories
     upload-dir: ${STORAGE_UPLOAD_DIR:./private-storage/uploads}
+    provider: ${TRUSTVAULT_STORAGE_PROVIDER:local}
+    convex:
+      base-url: ${TRUSTVAULT_CONVEX_BASE_URL:}
+      shared-secret: ${TRUSTVAULT_CONVEX_SHARED_SECRET:}
+
   dev:
     seed-user:
       # Disabled by default; only active when 'dev' profile is enabled AND this is set to true
@@ -78,6 +93,7 @@ trustvault:
       username: ${TV_DEV_USERNAME:}
       password: ${TV_DEV_PASSWORD:}
       email: ${TV_DEV_EMAIL:}
+
     reset-password:
       # Explicit one-time opt-in; only active when 'dev' profile is enabled AND this is set to true
       enabled: ${TV_DEV_RESET_PASSWORD:false}

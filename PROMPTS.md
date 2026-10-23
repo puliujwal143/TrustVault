@@ -2085,3 +2085,68 @@ Focus areas:
 - Skipped Tests: 6 platform-specific symlink tests in `LocalStorageServiceTest` on Windows.
 - Build Status: `BUILD SUCCESS` (02:35 min).
 - Git Integrity: Working tree uncommitted; zero destructive actions performed.
+
+---
+
+## Date: 2026-10-23 (Session 35 — Convex Cloud Storage Integration and Verification)
+
+### Context & Task
+Integration of Convex HTTP Actions as a secure cloud document storage provider for TrustVault, diagnostic investigation and resolution of startup and upload failures, and verification of full upload/download functionality.
+
+### User Prompt
+> Step: Convex Storage Integration and Verification
+>
+> Objective:
+> Integrate Convex as the document storage provider for TrustVault and verify that documents can be uploaded and downloaded successfully.
+>
+> Implementation:
+> - Configured TrustVault to use the Convex storage provider.
+> - Configured the Convex HTTP Actions base URL and shared secret through environment variables.
+> - Updated ConvexStorageService validation to reject recognizable accidental shell assignments without incorrectly rejecting legitimate secrets containing Base64 padding characters.
+> - Added unit tests covering legitimate secret formats and invalid shell-assignment expressions.
+> - Preserved blank-value validation, HTTPS URL validation, and the storage connectivity check.
+>
+> Issue Encountered:
+> The application initially failed during startup because the shared-secret validation rejected any secret containing `=`, including legitimate Base64-encoded secrets with padding.
+>
+> Resolution:
+> Replaced the overly broad character-based validation with a targeted regular expression for recognizable shell assignment and expression syntax.
+>
+> Verification:
+> - Focused ConvexStorageServiceTest suite: 22 tests passed, with no failures or errors.
+> - Spring Boot application: started successfully.
+> - Document upload through TrustVault: successful.
+> - Document download through TrustVault: successful.
+> - Downloaded document content: matched the original test document.
+>
+> Files Changed:
+> - src/main/java/com/trustvault/storage/ConvexStorageService.java
+> - src/test/java/com/trustvault/storage/ConvexStorageServiceTest.java
+>
+> Outcome:
+> The basic TrustVault-to-Convex document upload and download flow is verified. Additional authorization, sharing, audit-trail, and deployment scenarios should be tested separately.
+
+### Issues Identified & Technical Solutions
+1. **Accidental Shell Assignment Injection in Shared Secret**:
+   - *Issue*: Environment variable `TRUSTVAULT_CONVEX_SHARED_SECRET` in PowerShell received the literal command string `"$env:TRUSTVAULT_CONVEX_SHARED_SECRET = Get-Clipboard"` instead of the evaluated clipboard token, resulting in HTTP 401 Unauthorized errors from Convex HTTP Actions.
+   - *Fix*: Diagnosed via JVM heap analysis of running process PID 18160. Added persistent file logging (`logs/trustvault.log`) and safe, non-leaking diagnostic logging to `ConvexStorageService`.
+2. **Overly Broad Secret Validation Rejecting Base64 Padding**:
+   - *Issue*: Startup validation in `init()` naively checked `sharedSecret.contains("=")`, which rejected valid Base64-encoded secrets ending in `=` padding.
+   - *Fix*: Replaced individual character and prefix checks with `ACCIDENTAL_SHELL_EXPRESSION` regex pattern, specifically targeting recognizable shell syntax (`$env:... =`, `Get-Clipboard`, `export ...=`, `set ...=`) while permitting standard Base64 secrets, multiple `=` characters, and arbitrary token formats.
+3. **Defensive Normalization & Non-Blocking Health Check**:
+   - *Solution*: Added automated stripping of accidental `"Bearer "` prefixes and quotation marks. Added non-blocking startup diagnostic probe against `/health` that logs actionable ERROR diagnostics for HTTP 401/503 without failing offline/mocked unit tests.
+
+### Files Created & Modified
+- `src/main/java/com/trustvault/storage/ConvexStorageService.java` (Created: Convex cloud storage provider implementation with defensive validation and safe diagnostic logging)
+- `src/main/resources/application.yml` (Updated: configured file logging `logs/trustvault.log` and DEBUG level for `com.trustvault`)
+- `src/main/java/com/trustvault/storage/LocalStorageService.java` (Updated: added `@ConditionalOnProperty(name = "trustvault.storage.provider", havingValue = "local", matchIfMissing = true)`)
+- `src/test/java/com/trustvault/storage/ConvexStorageServiceTest.java` (Created: 22 unit tests covering URL normalization, upload/download operations, Base64 secret padding, shell assignment rejection, and HTTP status handling)
+- `PROMPTS.md` (Updated: recorded Session 35)
+
+### Build & Verification Results
+- `ConvexStorageServiceTest`: 22 tests run, 22 passed, 0 failures, 0 errors.
+- Full Test Suite (`.\mvnw.cmd test`): **394 tests run, 394 passed, 0 failures, 0 errors, 6 skipped.**
+- Live Application Verification at `http://localhost:8082`:
+  - Process started cleanly with `TRUSTVAULT_STORAGE_PROVIDER=convex`.
+  - Document file upload succeeded with SHA-256 integrity and MIME validation.
+  - Document file download succeeded and binary content matched byte-for-byte.

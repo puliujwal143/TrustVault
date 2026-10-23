@@ -7,6 +7,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.Resource;
 import org.springframework.core.io.UrlResource;
 import org.springframework.stereotype.Service;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
@@ -29,31 +30,50 @@ import java.util.stream.Stream;
 /**
  * Local filesystem implementation of {@link StorageService}.
  *
- * <p>Security & Isolation Architecture:
+ * <p>
+ * Security & Isolation Architecture:
  * <ul>
- *   <li><b>Private Storage Root</b>: Stores files in a configurable directory (default: {@code ./private-storage/uploads}),
- *       strictly isolated from web server static resources (e.g. {@code /static/}, {@code /public/}).</li>
- *   <li><b>Storage Root Safety</b>: Rejects filesystem roots (e.g. {@code /} or {@code C:\}) to prevent catastrophic
- *       misconfiguration or root traversal.</li>
- *   <li><b>Identifier Obfuscation</b>: Files are named on disk using immutable {@link UUID}s (e.g. {@code {storageKey}.bin}).
- *       User-supplied or client-controlled filenames are <em>never</em> used to construct disk paths.</li>
- *   <li><b>Path Traversal Defense</b>: Strict canonicalization and parent-containment checks guarantee that
- *       resolved paths never escape the configured storage directory.</li>
- *   <li><b>Symbolic Link Defense</b>: Rejects symbolic links for existing storage files across all operations
- *       ({@code loadAsStream}, {@code loadAsResource}, {@code exists}, {@code getFileSize}, {@code delete}, {@code store})
- *       using {@link LinkOption#NOFOLLOW_LINKS} and explicit checks to defend against planted symlink attacks.
- *       (Note: While Java NIO defenses mitigate symlink escapes, absolute immunity against all local filesystem
- *       TOCTOU races remains bounded by host operating system kernel and filesystem semantics).</li>
- *   <li><b>Atomic Replacement & Staging Cleanup</b>: Writes stream into a temporary staging file first and promote to the final
- *       destination using an atomic filesystem move ({@code ATOMIC_MOVE}). Any abandoned staging files matching
- *       {@code tv_upload_*.tmp} are cleaned up on startup.</li>
- *   <li><b>Ephemeral Storage Limitation Note</b>: This local implementation writes to the container/host filesystem.
- *       On free cloud hosting platforms with ephemeral disks (such as Render or Railway free tiers), local disk state
- *       is reset on redeployment or container restart. Production deployments requiring cross-instance durability
- *       should bind a persistent volume or adopt a cloud object storage provider.</li>
+ * <li><b>Private Storage Root</b>: Stores files in a configurable directory
+ * (default: {@code ./private-storage/uploads}),
+ * strictly isolated from web server static resources (e.g. {@code /static/},
+ * {@code /public/}).</li>
+ * <li><b>Storage Root Safety</b>: Rejects filesystem roots (e.g. {@code /} or
+ * {@code C:\}) to prevent catastrophic
+ * misconfiguration or root traversal.</li>
+ * <li><b>Identifier Obfuscation</b>: Files are named on disk using immutable
+ * {@link UUID}s (e.g. {@code {storageKey}.bin}).
+ * User-supplied or client-controlled filenames are <em>never</em> used to
+ * construct disk paths.</li>
+ * <li><b>Path Traversal Defense</b>: Strict canonicalization and
+ * parent-containment checks guarantee that
+ * resolved paths never escape the configured storage directory.</li>
+ * <li><b>Symbolic Link Defense</b>: Rejects symbolic links for existing storage
+ * files across all operations
+ * ({@code loadAsStream}, {@code loadAsResource}, {@code exists},
+ * {@code getFileSize}, {@code delete}, {@code store})
+ * using {@link LinkOption#NOFOLLOW_LINKS} and explicit checks to defend against
+ * planted symlink attacks.
+ * (Note: While Java NIO defenses mitigate symlink escapes, absolute immunity
+ * against all local filesystem
+ * TOCTOU races remains bounded by host operating system kernel and filesystem
+ * semantics).</li>
+ * <li><b>Atomic Replacement & Staging Cleanup</b>: Writes stream into a
+ * temporary staging file first and promote to the final
+ * destination using an atomic filesystem move ({@code ATOMIC_MOVE}). Any
+ * abandoned staging files matching
+ * {@code tv_upload_*.tmp} are cleaned up on startup.</li>
+ * <li><b>Ephemeral Storage Limitation Note</b>: This local implementation
+ * writes to the container/host filesystem.
+ * On free cloud hosting platforms with ephemeral disks (such as Render or
+ * Railway free tiers), local disk state
+ * is reset on redeployment or container restart. Production deployments
+ * requiring cross-instance durability
+ * should bind a persistent volume or adopt a cloud object storage
+ * provider.</li>
  * </ul>
  */
 @Service
+@ConditionalOnProperty(name = "trustvault.storage.provider", havingValue = "local", matchIfMissing = true)
 public class LocalStorageService implements StorageService {
 
     private static final Logger log = LoggerFactory.getLogger(LocalStorageService.class);
@@ -63,13 +83,13 @@ public class LocalStorageService implements StorageService {
     public static final String TEMP_EXTENSION = ".tmp";
 
     private static final Pattern UUID_PATTERN = Pattern.compile(
-            "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
-    );
+            "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$");
 
     private final Path rootLocation;
 
     /**
-     * Programmatic constructor accepting a direct {@link Path}, useful for hermetic testing.
+     * Programmatic constructor accepting a direct {@link Path}, useful for hermetic
+     * testing.
      *
      * @param rootLocation the target root directory for storage
      */
@@ -80,9 +100,11 @@ public class LocalStorageService implements StorageService {
     }
 
     /**
-     * Spring-managed constructor injecting the configured upload directory property.
+     * Spring-managed constructor injecting the configured upload directory
+     * property.
      *
-     * @param uploadDir configured storage path (default: {@code ./private-storage/uploads})
+     * @param uploadDir configured storage path (default:
+     *                  {@code ./private-storage/uploads})
      */
     @Autowired
     public LocalStorageService(@Value("${trustvault.storage.upload-dir:./private-storage/uploads}") String uploadDir) {
@@ -101,7 +123,8 @@ public class LocalStorageService implements StorageService {
                 Files.createDirectories(this.rootLocation);
                 log.info("Initialized TrustVault private storage directory at: {}", this.rootLocation);
             } else if (!Files.isDirectory(this.rootLocation)) {
-                throw new StorageException("Configured storage path exists but is not a directory: " + this.rootLocation);
+                throw new StorageException(
+                        "Configured storage path exists but is not a directory: " + this.rootLocation);
             }
 
             if (!Files.isWritable(this.rootLocation)) {
@@ -142,7 +165,8 @@ public class LocalStorageService implements StorageService {
             try {
                 Files.move(tempPath, targetPath, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
             } catch (AtomicMoveNotSupportedException ex) {
-                log.debug("Atomic move not supported on current filesystem; falling back to standard replace: {}", ex.getMessage());
+                log.debug("Atomic move not supported on current filesystem; falling back to standard replace: {}",
+                        ex.getMessage());
                 Files.move(tempPath, targetPath, StandardCopyOption.REPLACE_EXISTING);
             }
 
@@ -150,7 +174,8 @@ public class LocalStorageService implements StorageService {
         } catch (IOException ex) {
             throw new StorageException("Failed to store file for storage key: " + storageKey, ex);
         } finally {
-            // Guarantee that temporary staging files are deleted if an error occurred before atomic move
+            // Guarantee that temporary staging files are deleted if an error occurred
+            // before atomic move
             try {
                 Files.deleteIfExists(tempPath);
             } catch (IOException cleanupEx) {
@@ -317,7 +342,8 @@ public class LocalStorageService implements StorageService {
     }
 
     /**
-     * Asserts that the configured storage path is not located inside public static web resource folders.
+     * Asserts that the configured storage path is not located inside public static
+     * web resource folders.
      */
     private void assertStoragePathNotPublic(Path path) {
         String normalized = path.toString().replace('\\', '/').toLowerCase(Locale.ROOT);
@@ -325,7 +351,9 @@ public class LocalStorageService implements StorageService {
                 || normalized.contains("/src/main/resources/public")
                 || normalized.contains("/target/classes/static")
                 || normalized.contains("/target/classes/public")) {
-            throw new StorageException("Security violation: Storage directory must not be located within public or static web resource directories: " + path);
+            throw new StorageException(
+                    "Security violation: Storage directory must not be located within public or static web resource directories: "
+                            + path);
         }
     }
 
@@ -335,7 +363,8 @@ public class LocalStorageService implements StorageService {
     private void assertStoragePathNotRoot(Path path) {
         Path normalized = path.toAbsolutePath().normalize();
         if (normalized.getParent() == null || normalized.equals(normalized.getRoot())) {
-            throw new StorageException("Security violation: Configured storage path cannot be a filesystem root: " + path);
+            throw new StorageException(
+                    "Security violation: Configured storage path cannot be a filesystem root: " + path);
         }
     }
 
@@ -350,7 +379,8 @@ public class LocalStorageService implements StorageService {
     }
 
     /**
-     * Cleans up abandoned temporary staging files matching the application pattern tv_upload_*.tmp on startup.
+     * Cleans up abandoned temporary staging files matching the application pattern
+     * tv_upload_*.tmp on startup.
      */
     private void cleanupAbandonedStagingFiles() {
         try (DirectoryStream<Path> stream = Files.newDirectoryStream(this.rootLocation, "tv_upload_*.tmp")) {

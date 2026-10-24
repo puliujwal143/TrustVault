@@ -216,4 +216,31 @@ class ForwardedHeaderHandlingTest {
                 .as("Filter must read getRemoteAddr() and never parse raw client-supplied headers directly")
                 .isEqualTo("203.0.113.10");
     }
+
+    @Test
+    @DisplayName("7. Committed internal-proxies regex matches complete 4-octet IPv4 addresses and rejects incomplete prefixes")
+    void testInternalProxiesRegexMatchesCompleteAddresses() {
+        String pattern = serverProperties.getTomcat().getRemoteip().getInternalProxies();
+        java.util.regex.Pattern regex = java.util.regex.Pattern.compile(pattern);
+
+        // Complete 4-octet IPv4 addresses across all branches
+        assertThat(regex.matcher("10.0.4.15").matches()).isTrue();
+        assertThat(regex.matcher("192.168.1.1").matches()).isTrue();
+        assertThat(regex.matcher("169.254.1.1").matches()).isTrue();
+        assertThat(regex.matcher("127.0.0.1").matches()).isTrue();
+        assertThat(regex.matcher("172.16.0.1").matches()).isTrue();
+        assertThat(regex.matcher("172.31.255.254").matches()).isTrue();
+        assertThat(regex.matcher("::1").matches()).isTrue();
+        assertThat(regex.matcher("0:0:0:0:0:0:0:1").matches()).isTrue();
+
+        // Incomplete prefixes (must be rejected)
+        assertThat(regex.matcher("192.168.1").matches()).isFalse();
+        assertThat(regex.matcher("169.254.1").matches()).isFalse();
+        assertThat(regex.matcher("10.1.1").matches()).isFalse();
+        assertThat(regex.matcher("127.0.0").matches()).isFalse();
+
+        // Out-of-range or public addresses (must be rejected)
+        assertThat(regex.matcher("172.32.0.1").matches()).isFalse();
+        assertThat(regex.matcher("203.0.113.195").matches()).isFalse();
+    }
 }

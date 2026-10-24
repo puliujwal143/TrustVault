@@ -50,7 +50,7 @@ public class AuthenticationEventListener {
 
         rateLimiter.recordFailure(clientIp, username);
         log.warn("Authentication failure tracked for username '{}' from IP '{}' (type: {})",
-                username != null ? username : "[unknown]", clientIp, event.getException().getClass().getSimpleName());
+                AuthenticationRateLimiter.sanitizeForLog(username), clientIp, event.getException().getClass().getSimpleName());
     }
 
     /**

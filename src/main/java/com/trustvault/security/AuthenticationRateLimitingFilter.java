@@ -82,7 +82,7 @@ public class AuthenticationRateLimitingFilter extends OncePerRequestFilter {
             if (rateLimiter.isBlocked(clientIp, username)) {
                 long remainingSeconds = rateLimiter.getRemainingBlockSeconds(clientIp, username);
                 log.warn("Form login blocked by rate limiter for IP '{}' and username '{}' (remaining: {}s)",
-                        clientIp, username, remainingSeconds);
+                        clientIp, AuthenticationRateLimiter.sanitizeForLog(username), remainingSeconds);
 
                 response.setHeader("Retry-After", String.valueOf(remainingSeconds));
                 response.sendRedirect(request.getContextPath() + "/login?blocked");
@@ -97,7 +97,7 @@ public class AuthenticationRateLimitingFilter extends OncePerRequestFilter {
             if (rateLimiter.isBlocked(clientIp, basicUsername)) {
                 long remainingSeconds = rateLimiter.getRemainingBlockSeconds(clientIp, basicUsername);
                 log.warn("HTTP Basic request blocked by rate limiter for IP '{}' and username '{}' (remaining: {}s)",
-                        clientIp, basicUsername, remainingSeconds);
+                        clientIp, AuthenticationRateLimiter.sanitizeForLog(basicUsername), remainingSeconds);
 
                 response.setStatus(HttpStatus.TOO_MANY_REQUESTS.value()); // HTTP 429
                 response.setContentType(MediaType.APPLICATION_JSON_VALUE);

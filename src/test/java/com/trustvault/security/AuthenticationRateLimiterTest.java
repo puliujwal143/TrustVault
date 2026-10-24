@@ -426,4 +426,59 @@ class AuthenticationRateLimiterTest {
                 .as("User exceeding 5 failures on private network is blocked")
                 .isTrue();
     }
+
+    @Test
+    @DisplayName("13. Log sanitization removes CRLF, tabs, control characters, and truncates oversized input")
+    void testLogSanitization() {
+        // Null and blank
+        assertThat(AuthenticationRateLimiter.sanitizeForLog(null)).isEqualTo("[none]");
+        assertThat(AuthenticationRateLimiter.sanitizeForLog("")).isEqualTo("[none]");
+        assertThat(AuthenticationRateLimiter.sanitizeForLog("   ")).isEqualTo("[none]");
+
+        // CRLF, tab, and control character injection
+        assertThat(AuthenticationRateLimiter.sanitizeForLog("admin\r\n[ERROR] Forged log line"))
+                .isEqualTo("admin__[ERROR] Forged log line");
+        assertThat(AuthenticationRateLimiter.sanitizeForLog("user\twith\tcontrol\u0000chars"))
+                .isEqualTo("user_with_control_chars");
+
+        // Oversized input truncation
+        String oversized = "a".repeat(150);
+        String sanitized = AuthenticationRateLimiter.sanitizeForLog(oversized);
+        assertThat(sanitized).hasSize(103); // 100 chars + "..."
+        assertThat(sanitized).endsWith("...");
+    }
+
+    @Test
+    @DisplayName("14. Oversized usernames: SHA-256 hashing preserves account isolation and consistent lifecycle")
+    void testOversizedUsernameIsolationAndLifecycle() {
+        String base = "a".repeat(150);
+        String userA = base + "_1";
+        String userB = base + "_2";
+        String ip = "192.168.1.75";
+
+        // 4 failed attempts for userA
+        for (int i = 0; i < 4; i++) {
+            rateLimiter.recordFailure(ip, userA);
+            assertThat(rateLimiter.isBlocked(ip, userA)).isFalse();
+        }
+
+        // Successful login resets counter for userA
+        rateLimiter.recordSuccess(ip, userA);
+
+        // Next failure starts at attempt 1 (not blocked)
+        rateLimiter.recordFailure(ip, userA);
+        assertThat(rateLimiter.isBlocked(ip, userA)).isFalse();
+
+        // 4 more failures (total 5 consecutive within active window) triggers block for userA
+        for (int i = 0; i < 4; i++) {
+            rateLimiter.recordFailure(ip, userA);
+        }
+        assertThat(rateLimiter.isBlocked(ip, userA)).isTrue();
+        assertThat(rateLimiter.getRemainingBlockSeconds(ip, userA)).isGreaterThan(0);
+
+        // Account isolation: userB sharing the first 150 characters is NOT blocked
+        assertThat(rateLimiter.isBlocked(ip, userB))
+                .as("Distinct oversized username must not be blocked due to hash collision or truncation")
+                .isFalse();
+    }
 }

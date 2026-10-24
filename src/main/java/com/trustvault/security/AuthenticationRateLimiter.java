@@ -4,6 +4,9 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -66,6 +69,7 @@ public class AuthenticationRateLimiter {
     public static final Duration BACKOFF_DURATION = Duration.ofMinutes(BACKOFF_MINUTES);
     public static final Duration EXPIRATION_WINDOW = Duration.ofMinutes(BACKOFF_MINUTES);
     public static final int MAX_CACHE_ENTRIES = 10_000;
+    public static final int MAX_USERNAME_LENGTH = 128;
 
     private final Clock clock;
     private final ConcurrentHashMap<String, AttemptRecord> cache = new ConcurrentHashMap<>();
@@ -98,7 +102,7 @@ public class AuthenticationRateLimiter {
             int count = targetRecord.recordFailure(now, EXPIRATION_WINDOW, BACKOFF_DURATION, MAX_ATTEMPTS_PER_TARGET);
             if (count >= MAX_ATTEMPTS_PER_TARGET && targetRecord.getBlockedUntil() != null) {
                 log.warn("Rate limit triggered: IP '{}' temporarily blocked for username '{}' until {} (failures: {})",
-                        cleanIp, cleanUsername, targetRecord.getBlockedUntil(), count);
+                        cleanIp, sanitizeForLog(cleanUsername), targetRecord.getBlockedUntil(), count);
             }
         }
 
@@ -130,7 +134,7 @@ public class AuthenticationRateLimiter {
             String targetKey = buildTargetKey(cleanIp, cleanUsername);
             AttemptRecord removed = cache.remove(targetKey);
             if (removed != null && removed.getFailureCount() > 0) {
-                log.debug("Reset failure counter for target '{}' from IP '{}'", cleanUsername, cleanIp);
+                log.debug("Reset failure counter for target '{}' from IP '{}'", sanitizeForLog(cleanUsername), cleanIp);
             }
         }
     }
@@ -400,7 +404,40 @@ public class AuthenticationRateLimiter {
         if (username == null || username.isBlank()) {
             return null;
         }
-        return username.trim().toLowerCase(Locale.ROOT);
+        String normalized = username.trim().toLowerCase(Locale.ROOT);
+        if (normalized.length() <= MAX_USERNAME_LENGTH) {
+            return normalized;
+        }
+        // Enforce strict memory bounds without identity collision
+        return "sha256:" + sha256Hex(normalized);
+    }
+
+    /**
+     * Sanitizes untrusted user input before logging to prevent log injection (CWE-117).
+     * Replaces CR, LF, tabs, and ISO control characters with an underscore and caps length.
+     */
+    public static String sanitizeForLog(String input) {
+        if (input == null || input.isBlank()) {
+            return "[none]";
+        }
+        String cleaned = input.replaceAll("[\\r\\n\\t\\p{Cntrl}]", "_");
+        return cleaned.length() > 100 ? cleaned.substring(0, 100) + "..." : cleaned;
+    }
+
+    private static String sha256Hex(String input) {
+        try {
+            MessageDigest md = MessageDigest.getInstance("SHA-256");
+            byte[] digest = md.digest(input.getBytes(StandardCharsets.UTF_8));
+            StringBuilder sb = new StringBuilder(digest.length * 2);
+            for (byte b : digest) {
+                sb.append(String.format("%02x", b));
+            }
+            return sb.toString();
+        } catch (NoSuchAlgorithmException e) {
+            // SHA-256 is guaranteed by standard Java SE specification.
+            // Failing fast avoids insecure fallback to high-collision algorithms like hashCode().
+            throw new IllegalStateException("SHA-256 message digest algorithm is required but unavailable on this JVM", e);
+        }
     }
 
     /**

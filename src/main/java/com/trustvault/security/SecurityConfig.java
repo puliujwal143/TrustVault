@@ -1,13 +1,17 @@
 package com.trustvault.security;
 
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.security.authentication.AuthenticationEventPublisher;
+import org.springframework.security.authentication.DefaultAuthenticationEventPublisher;
 import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.core.session.SessionRegistry;
 import org.springframework.security.core.session.SessionRegistryImpl;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 import org.springframework.security.web.authentication.logout.SimpleUrlLogoutSuccessHandler;
 import org.springframework.security.web.session.HttpSessionEventPublisher;
 
@@ -23,6 +27,7 @@ import org.springframework.security.web.session.HttpSessionEventPublisher;
  *   revocation of active sessions upon security events (such as password changes).
  * - Expired sessions are redirected to /login?expired.
  * - Form login and HTTP Basic authentication are supported.
+ * - Enforces application-level authentication rate limiting before credential evaluation.
  * - Logout endpoint is configured and whitelisted.
  */
 @Configuration
@@ -30,9 +35,22 @@ import org.springframework.security.web.session.HttpSessionEventPublisher;
 public class SecurityConfig {
 
     private final CustomUserDetailsService userDetailsService;
+    private final AuthenticationRateLimitingFilter rateLimitingFilter;
 
-    public SecurityConfig(CustomUserDetailsService userDetailsService) {
+    public SecurityConfig(
+            CustomUserDetailsService userDetailsService,
+            AuthenticationRateLimitingFilter rateLimitingFilter) {
         this.userDetailsService = userDetailsService;
+        this.rateLimitingFilter = rateLimitingFilter;
+    }
+
+    /**
+     * Publishes authentication success and failure events across form login and HTTP Basic
+     * to notify the rate limiter and failure tracking listeners.
+     */
+    @Bean
+    public AuthenticationEventPublisher authenticationEventPublisher(ApplicationEventPublisher applicationEventPublisher) {
+        return new DefaultAuthenticationEventPublisher(applicationEventPublisher);
     }
 
     /**
@@ -72,6 +90,7 @@ public class SecurityConfig {
                 .anyRequest().authenticated()
             )
             .userDetailsService(userDetailsService)
+            .addFilterBefore(rateLimitingFilter, UsernamePasswordAuthenticationFilter.class)
             .formLogin(form -> form
                 .loginPage("/login")
                 .permitAll()

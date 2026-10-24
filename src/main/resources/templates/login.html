@@ -75,6 +75,19 @@
         </div>
       </div>
 
+      <!-- 2. Rate Limit Blocked Alert -->
+      <div th:if="${param.blocked != null}" class="alert alert-danger" role="alert" id="auth-blocked-alert">
+        <svg class="alert-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="10"></circle>
+          <line x1="12" y1="8" x2="12" y2="12"></line>
+          <line x1="12" y1="16" x2="12.01" y2="16"></line>
+        </svg>
+        <div class="alert-content">
+          <div class="alert-title">Access Temporarily Suspended</div>
+          <div class="alert-message">Too many consecutive failed login attempts. For security, authentication is temporarily suspended. Please wait 15 minutes before trying again.</div>
+        </div>
+      </div>
+
       <!-- 2. Session Expired Notice -->
       <div th:if="${param.expired != null}" class="alert alert-warning" role="alert" id="auth-expired-alert">
         <svg class="alert-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">

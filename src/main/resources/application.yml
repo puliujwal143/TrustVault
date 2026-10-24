@@ -68,6 +68,15 @@ logging:
 # ------------------------------------------------------------------------------
 server:
   port: ${PORT:8080}
+  # Forwarded headers strategy for reverse proxies (Render, AWS ALB, Cloudflare).
+  # Uses Tomcat's native RemoteIpValve to safely resolve client IP and scheme
+  # strictly from trusted internal proxy ranges, preventing client IP spoofing.
+  forward-headers-strategy: native
+  tomcat:
+    remoteip:
+      remote-ip-header: x-forwarded-for
+      protocol-header: x-forwarded-proto
+      internal-proxies: '10\.\d{1,3}\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3}|169\.254\.\d{1,3}\.\d{1,3}|127\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3}|0:0:0:0:0:0:0:1|::1'
   error:
     include-message: never
     include-binding-errors: never

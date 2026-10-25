@@ -176,7 +176,10 @@ In production, automatic seeders are permanently disabled to prevent unauthorize
 To avoid exposing plaintext passwords over the network or in shell history, use the built-in `PasswordHashGenerator` utility:
 ```powershell
 # Interactive mode (prompts securely without echoing password to terminal):
-& .\mvnw.cmd -q exec:java "-Dexec.mainClass=com.trustvault.security.PasswordHashGenerator"
+.\mvnw.cmd -q exec:java
+
+# Alternatively, explicitly specify the main class:
+.\mvnw.cmd -q exec:java "-Dexec.mainClass=com.trustvault.security.PasswordHashGenerator"
 ```
 The utility enforces minimum password complexity (>= 8 characters), uses BCrypt work factor 12 (4,096 iterations), and outputs the formatted hash:
 ```

@@ -3,7 +3,7 @@
 TrustVault is an enterprise document-sharing platform engineered with defense-in-depth principles. It combines fine-grained Attribute-Based Access Control (ABAC), isolated private document storage (supporting local filesystem and Convex cloud storage), cryptographic file integrity verification, and an auditable activity history.
 
 - **Live Deployment:** [https://trustvault-axea.onrender.com](https://trustvault-axea.onrender.com)
-- **Repository:** Git/GitHub pushed on branch `main`
+- **Repository:** https://github.com/puliujwal143/TrustVault
 
 For in-depth architectural blueprints and component breakdowns, see [`ARCHITECTURE.md`](file:///d:/TrustVault/ARCHITECTURE.md).
 For detailed threat models, risk ratings, and security verification checklists, see [`THREATS.md`](file:///d:/TrustVault/THREATS.md).

@@ -10,6 +10,18 @@ For detailed threat models, risk ratings, and security verification checklists, 
 
 ---
 
+## Demo Login Credentials
+
+**Live Application:** https://trustvault-axea.onrender.com
+
+| Role | Username | Password |
+|---|---|---|
+| Administrator | `admin` | `Admin@123` |
+| Developer | `devuser` | `Devuser@123` |
+| Test User | `testuser2` | `Testuser2@123` |
+
+These credentials are for demo and evaluation purposes only. Do not upload personal or confidential documents.
+
 ## 1. Technology Stack
 
 TrustVault is built using a modern enterprise Java stack:

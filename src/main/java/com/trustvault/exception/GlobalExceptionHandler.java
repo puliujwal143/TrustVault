@@ -13,6 +13,7 @@ import org.springframework.security.access.AccessDeniedException;
 import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
+import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.multipart.MaxUploadSizeExceededException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
@@ -20,15 +21,15 @@ import org.springframework.web.servlet.resource.NoResourceFoundException;
 import java.util.List;
 
 /**
- * Global exception handler providing centralized error processing.
+ * Global exception handler providing centralized error processing for REST controllers.
  *
  * Responsibilities:
- * - Intercept exceptions across all controllers.
+ * - Intercept exceptions across all REST API controllers (@RestController).
  * - Map exceptions to appropriate HTTP status codes.
  * - Suppress sensitive implementation details and stack traces.
  * - Format clean, structured ErrorResponseDto payloads.
  */
-@RestControllerAdvice
+@RestControllerAdvice(annotations = RestController.class)
 public class GlobalExceptionHandler {
 
     private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
